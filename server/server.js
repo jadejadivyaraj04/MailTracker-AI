@@ -13,31 +13,30 @@ const PORT = process.env.PORT || 5000;
 
 app.set('trust proxy', 1);
 
+// Security middleware
 app.use(helmet());
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(origin => origin.trim()).filter(Boolean).filter(Boolean);
-const corsOptions = (() => {
-  if (!allowedOrigins || allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
-    return { origin: true, credentials: true };
-  }
 
-  return {
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      const error = new Error(`Not allowed by CORS: ${origin}`);
-      console.error('[MailTracker AI] CORS rejection', error.message);
-      return callback(error);
-    },
-    credentials: true
-  };
-})();
-app.use(cors(corsOptions));
+// ✅ OPTION 2 — Allow ANY origin (fixes curl + browser CORS errors)
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false
+  })
+);
+
+// Handle OPTIONS preflight manually
+app.options("*", (req, res) => {
+  res.sendStatus(200);
+});
+
 app.use(compression());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined'));
 
+// Rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 500,
@@ -46,12 +45,15 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
 });
 
+// Routes
 app.use('/', trackRouter);
 
+// Start server
 const start = async () => {
   try {
     await connectDB();
