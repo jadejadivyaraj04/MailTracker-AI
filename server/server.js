@@ -15,10 +15,10 @@ app.set('trust proxy', 1);
 
 app.use(helmet());
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(origin => origin.trim()).filter(Boolean).filter(Boolean);
-const corsOptions = (() => {
-  if (!allowedOrigins || allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
-    return { origin: true, credentials: true };
-  }
+const corsOptions = {
+  origin: "*",
+};
+
 
   return {
     origin: (origin, callback) => {
