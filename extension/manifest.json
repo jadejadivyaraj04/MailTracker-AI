@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Track Gmail email opens and clicks — free Mailtrack alternative.",
   "permissions": ["storage", "scripting", "activeTab", "notifications"],
-  "host_permissions": ["https://mail.google.com/*", "https://mailtracker-backend.onrender.com/*"],
+  "host_permissions": ["https://mail.google.com/*", "https://mailtracker-ai.onrender.com/*"],
   "background": {
     "service_worker": "background.js"
   },

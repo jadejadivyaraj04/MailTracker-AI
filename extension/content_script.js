@@ -1,7 +1,7 @@
 // MailTracker AI Content Script
 // Injected into Gmail to append tracking pixels, rewrite links, and notify backend
 
-const MAILTRACKER_BACKEND_BASE = 'https://mailtracker-backend.onrender.com';
+const MAILTRACKER_BACKEND_BASE = 'https://mailtracker-ai.onrender.com';
 let trackingEnabled = true; // default, will sync with storage
 let userId = 'default';
 
