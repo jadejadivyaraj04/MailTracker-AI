@@ -144,7 +144,17 @@ router.get('/stats/user/:userId', async (req, res) => {
 
   try {
     const messages = await Message.find({ userId }).sort({ createdAt: -1 }).limit(200);
-    const uids = messages.map(message => message.uid);
+    const uids = messages.map(message => message.uid).filter(Boolean);
+
+    if (!uids.length) {
+      return res.json({
+        userId,
+        totalMessages: 0,
+        totalOpens: 0,
+        totalClicks: 0,
+        messages: []
+      });
+    }
 
     const [openAgg, clickAgg] = await Promise.all([
       OpenEvent.aggregate([

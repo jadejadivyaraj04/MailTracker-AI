@@ -10,12 +10,17 @@ function Dashboard({ userId, apiBase, onLogout }) {
 
   useEffect(() => {
     const fetchStats = async () => {
+      if (!apiBase) {
+        setError('API base URL not configured.');
+        return;
+      }
+
       try {
         setLoading(true);
         setError('');
         const response = await fetch(`${apiBase}/stats/user/${encodeURIComponent(userId)}`);
         if (!response.ok) {
-          throw new Error('Failed to fetch stats');
+          throw new Error(`Failed to fetch stats: ${response.status}`);
         }
         const payload = await response.json();
         setStats(payload);

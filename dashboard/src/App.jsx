@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 
-const DEFAULT_API_BASE = 'http://localhost:5000';
+const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const getStoredUserId = () => {
   if (typeof window === 'undefined') return null;
@@ -23,7 +23,9 @@ function App() {
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
 
   useEffect(() => {
-    setApiBase(import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE);
+    if (import.meta.env.VITE_API_BASE_URL) {
+      setApiBase(import.meta.env.VITE_API_BASE_URL);
+    }
   }, []);
 
   useEffect(() => {
