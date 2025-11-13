@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MailTracker AI</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>MailTracker AI</h1>
+      <p class="subtitle">Control Gmail tracking, manage your identifier, and monitor status.</p>
+
+      <section class="card">
+        <h2>Tracking</h2>
+        <label class="toggle">
+          <input type="checkbox" id="trackingToggle" />
+          <span class="slider"></span>
+          <span class="label">Tracking Enabled</span>
+        </label>
+        <p class="hint">Applies to newly composed emails in Gmail.</p>
+      </section>
+
+      <section class="card">
+        <h2>User Identifier</h2>
+        <p class="hint">
+          Use the same ID here and in the analytics dashboard login. Your Gmail address works great.
+        </p>
+        <input type="email" id="userIdInput" placeholder="you@example.com" />
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
