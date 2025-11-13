@@ -140,7 +140,7 @@ router.get('/stats/:uid', async (req, res) => {
 });
 
 router.get('/stats/user/:userId', async (req, res) => {
-  const { userId } = req.params;
+  const userId = decodeURIComponent(req.params.userId || 'default');
 
   try {
     const messages = await Message.find({ userId }).sort({ createdAt: -1 }).limit(200);
@@ -198,6 +198,9 @@ router.get('/stats/user/:userId', async (req, res) => {
     });
   } catch (error) {
     console.error('[MailTracker AI] user stats error', error);
+    if (error?.stack) {
+      console.error(error.stack);
+    }
     return res.status(500).json({ error: 'Failed to load user stats' });
   }
 });

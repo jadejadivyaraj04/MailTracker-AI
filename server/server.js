@@ -11,17 +11,28 @@ import trackRouter from './routes/track.js';
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(origin => origin.trim()).filter(Boolean) || ['*'];
-
 app.set('trust proxy', 1);
 
 app.use(helmet());
-app.use(cors({ origin: (origin, callback) => {
-  if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-    return callback(null, origin || '*');
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(origin => origin.trim()).filter(Boolean).filter(Boolean);
+const corsOptions = (() => {
+  if (!allowedOrigins || allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
+    return { origin: true, credentials: true };
   }
-  return callback(new Error('Not allowed by CORS'));
-}, credentials: true }));
+
+  return {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      const error = new Error(`Not allowed by CORS: ${origin}`);
+      console.error('[MailTracker AI] CORS rejection', error.message);
+      return callback(error);
+    },
+    credentials: true
+  };
+})();
+app.use(cors(corsOptions));
 app.use(compression());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
