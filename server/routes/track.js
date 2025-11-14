@@ -230,48 +230,50 @@ router.get('/pixel', async (req, res) => {
         messageUid: uid,
         ipHash: ipHashValue,
         createdAt: { $gte: fiveSecondsAgo }
-      });
+      }).sort({ createdAt: -1 }); // Get the most recent one
       
       if (existingOpen) {
         // If we have a recipient email from token, update the existing event
-        // (This handles the case where multiple pixels load, and we want to identify the actual recipient)
+        // This ensures we identify which recipient actually opened when multiple pixels load
         if (recipientEmail) {
-          // Only update if existing event doesn't have a recipient email, or if it matches
-          // (to avoid overwriting correct recipient with wrong one from different pixel)
+          // Update with recipient email if we have it (prioritize token-based identification)
           if (!existingOpen.recipientEmail || existingOpen.recipientEmail === recipientEmail) {
             existingOpen.recipientEmail = recipientEmail;
             await existingOpen.save();
             console.log('[MailTracker AI] OpenEvent updated with recipient email:', { 
               messageUid: uid, 
-              recipientEmail 
+              recipientEmail,
+              hadRecipient: !!existingOpen.recipientEmail
             });
           } else {
-            console.log('[MailTracker AI] OpenEvent skipped (different recipient already set):', { 
+            // Different recipient already set - this shouldn't happen normally, but log it
+            console.log('[MailTracker AI] OpenEvent already has different recipient:', { 
               messageUid: uid, 
               recipientEmail,
               existingRecipient: existingOpen.recipientEmail
             });
           }
         } else {
-          console.log('[MailTracker AI] OpenEvent skipped (duplicate within 5s, no recipient identified):', { 
+          // No recipient identified from token, but event already exists
+          console.log('[MailTracker AI] OpenEvent exists (duplicate within 5s, no recipient from token):', { 
             messageUid: uid,
             existingRecipient: existingOpen.recipientEmail
           });
         }
       } else {
-        // Create new open event
+        // No existing event - create new one
         await OpenEvent.create({
           messageUid: uid,
-          recipientEmail, // Will be null if multiple recipients or lookup failed
+          recipientEmail, // Will be set if we identified recipient from token
           ipHash: ipHashValue,
           userAgent
         });
         
-        console.log('[MailTracker AI] OpenEvent created (valid):', { 
+        console.log('[MailTracker AI] OpenEvent created:', { 
           messageUid: uid, 
-          recipientEmail, 
+          recipientEmail: recipientEmail || 'not identified',
           hasRecipientEmail: !!recipientEmail,
-          userAgent: userAgent.substring(0, 50) // Log first 50 chars for debugging
+          userAgent: userAgent.substring(0, 50)
         });
       }
     } else {
