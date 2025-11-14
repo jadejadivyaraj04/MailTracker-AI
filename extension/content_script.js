@@ -313,7 +313,9 @@ const rewriteLinks = (bodyEl, uid) => {
     const href = link.getAttribute('href');
 
     // Skip if already rewritten, invalid, or mailto links
+    // Ensure href is a string before calling string methods
     if (!href || 
+        typeof href !== 'string' ||
         href.startsWith(MAILTRACKER_BACKEND_BASE) || 
         href.startsWith('mailto:') ||
         href.startsWith('javascript:') ||
