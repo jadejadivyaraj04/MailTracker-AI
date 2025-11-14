@@ -75,48 +75,73 @@ function EmailList({ messages = [] }) {
               </div>
             </div>
 
-            {/* Sent To Section */}
+            {/* Recipients Summary - Show counts prominently */}
             <div className="mb-4 pb-4 border-b border-slate-100">
-              <div className="flex items-start gap-2 mb-2">
-                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Sent To:</span>
-                <div className="flex-1 flex flex-wrap gap-2">
-                  {toRecipients.length > 0 ? (
-                    toRecipients.map((email, idx) => (
-                      <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                        {email}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-slate-400 italic">No recipients found</span>
-                  )}
+              <div className="flex items-center gap-4 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-700">To:</span>
+                  <span className="text-lg font-bold text-blue-600">{toRecipients.length}</span>
+                  <span className="text-sm text-slate-500">recipient{toRecipients.length !== 1 ? 's' : ''}</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-700">CC:</span>
+                  <span className={`text-lg font-bold ${ccRecipients.length > 0 ? 'text-slate-600' : 'text-slate-400'}`}>
+                    {ccRecipients.length}
+                  </span>
+                  <span className="text-sm text-slate-500">recipient{ccRecipients.length !== 1 ? 's' : ''}</span>
+                </div>
+                {bccRecipients.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-700">BCC:</span>
+                    <span className="text-lg font-bold text-slate-600">{bccRecipients.length}</span>
+                    <span className="text-sm text-slate-500">recipient{bccRecipients.length !== 1 ? 's' : ''}</span>
+                  </div>
+                )}
               </div>
-              
-              {ccRecipients.length > 0 && (
-                <div className="flex items-start gap-2 mb-2">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">CC:</span>
-                  <div className="flex-1 flex flex-wrap gap-2">
-                    {ccRecipients.map((email, idx) => (
-                      <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
-                        {email}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
 
-              {bccRecipients.length > 0 && (
+              {/* Detailed Recipients List */}
+              <div className="space-y-2">
                 <div className="flex items-start gap-2">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">BCC:</span>
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">To:</span>
                   <div className="flex-1 flex flex-wrap gap-2">
-                    {bccRecipients.map((email, idx) => (
-                      <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
-                        {email}
-                      </span>
-                    ))}
+                    {toRecipients.length > 0 ? (
+                      toRecipients.map((email, idx) => (
+                        <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                          {email}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-400 italic">No recipients found</span>
+                    )}
                   </div>
                 </div>
-              )}
+                
+                {ccRecipients.length > 0 && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">CC:</span>
+                    <div className="flex-1 flex flex-wrap gap-2">
+                      {ccRecipients.map((email, idx) => (
+                        <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                          {email}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {bccRecipients.length > 0 && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">BCC:</span>
+                    <div className="flex-1 flex flex-wrap gap-2">
+                      {bccRecipients.map((email, idx) => (
+                        <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                          {email}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Read By Section - Show individual recipient status for all emails */}
