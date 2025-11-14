@@ -219,37 +219,100 @@ const extractRecipients = composeRoot => {
     }
   });
 
+  /**
+   * Split concatenated emails by detecting TLD boundaries
+   * Example: "email1@example.comemail2@example.com" -> ["email1@example.com", "email2@example.com"]
+   */
+  const splitConcatenatedEmails = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    
+    const emails = [];
+    // Common TLDs to split on
+    const tldPattern = /\.(com|net|org|edu|gov|mil|co|io|ai|uk|ca|au|de|fr|jp|in|cn|br|ru|es|it|nl|se|no|dk|fi|pl|cz|gr|pt|ie|be|at|ch|nz|za|mx|ar|cl|co|pe|ve|ec|uy|py|bo|cr|pa|do|gt|hn|ni|sv|bz|jm|tt|bb|gd|lc|vc|ag|dm|kn|mu|sc|tz|ke|ug|et|gh|ng|sn|ci|cm|ga|cg|cd|ao|mz|zw|bw|na|sz|ls|mg|rw|bi|td|ne|ml|bf|mr|gm|gw|gn|sl|lr|tg|bj|dj|km|so|er|sd|ly|tn|dz|ma|eh|ss|ye|iq|sy|jo|lb|ps|il|sa|ae|om|qa|bh|kw|ir|af|pk|bd|lk|mv|np|bt|mm|th|la|kh|vn|ph|my|sg|bn|id|tl|pg|fj|nc|pf|ws|to|vu|sb|ki|nr|pw|fm|mh|as|gu|mp|vi|pr|do|ht|cu|jm|bs|ky|tc|vg|ai|ms|bl|mf|pm|wf|tf|re|yt|mo|hk|tw|kr|jp|cn|mn|kz|uz|tj|kg|tm|az|ge|am|by|ua|md|ro|bg|rs|me|ba|hr|si|sk|hu|ee|lv|lt|is|fo|gl|ax|sj|sx|bq|cw|aw|ky|vg|ai|ms|bl|mf|pm|wf|tf|re|yt|mo|hk|tw|kr|jp|cn|mn|kz|uz|tj|kg|tm|az|ge|am|by|ua|md|ro|bg|rs|me|ba|hr|si|sk|hu|ee|lv|lt|is|fo|gl|ax|sj|sx|bq|cw|aw)\b/gi;
+    
+    // Find all email patterns in the text
+    const emailRegex = /[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/g;
+    let match;
+    const foundEmails = [];
+    
+    while ((match = emailRegex.exec(text)) !== null) {
+      foundEmails.push(match[0]);
+    }
+    
+    // If we found emails, return them
+    if (foundEmails.length > 0) {
+      return foundEmails;
+    }
+    
+    // Fallback: Try to split by TLD pattern if no emails found
+    // This handles cases like "email1@example.comemail2@example.com"
+    const parts = text.split(tldPattern);
+    const potentialEmails = [];
+    let currentEmail = '';
+    
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (tldPattern.test('.' + part)) {
+        // This is a TLD
+        currentEmail += '.' + part;
+        // Check if currentEmail looks like an email
+        if (currentEmail.includes('@') && currentEmail.match(/^[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/)) {
+          potentialEmails.push(currentEmail);
+          currentEmail = '';
+        }
+      } else {
+        currentEmail += part;
+      }
+    }
+    
+    // If we built any emails, return them
+    if (potentialEmails.length > 0) {
+      return potentialEmails;
+    }
+    
+    // Last resort: return the original text if it looks like an email
+    if (text.includes('@') && text.includes('.')) {
+      return [text];
+    }
+    
+    return [];
+  };
+
   // Clean up and normalize emails
   Object.keys(recipients).forEach(key => {
     if (!recipients[key] || !Array.isArray(recipients[key]) || !recipients[key].length) {
       delete recipients[key];
     } else {
-      // Normalize emails: lowercase, trim, remove display names, validate
-      const originalCount = recipients[key].length;
-      recipients[key] = recipients[key]
+      // First, try to split any concatenated emails
+      const allEmails = [];
+      recipients[key].forEach(email => {
+        if (!email || typeof email !== 'string') return;
+        
+        // Extract email from "Name <email>" format if present
+        const emailMatch = email.match(/<([^>]+)>/) || email.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
+        const cleanEmail = emailMatch ? (emailMatch[1] || emailMatch[0]) : email;
+        
+        // Split concatenated emails
+        const splitEmails = splitConcatenatedEmails(cleanEmail);
+        allEmails.push(...splitEmails);
+      });
+      
+      // Normalize and validate
+      const originalCount = allEmails.length;
+      recipients[key] = allEmails
         .map(email => {
-          if (!email || typeof email !== 'string') {
-            console.log('[MailTracker AI] Skipping non-string email:', email);
-            return null;
-          }
+          if (!email || typeof email !== 'string') return null;
           
-          // Extract email from "Name <email>" format if present
-          const emailMatch = email.match(/<([^>]+)>/) || email.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
-          const cleanEmail = emailMatch ? (emailMatch[1] || emailMatch[0]) : email;
-          const normalized = cleanEmail.trim().toLowerCase();
+          const normalized = email.trim().toLowerCase();
           
-          // More lenient email validation - just check for basic email pattern
-          // Allow most common email formats
+          // Basic validation: has @, has ., reasonable length
           if (normalized && normalized.includes('@') && normalized.includes('.') && normalized.length > 5) {
-            // Basic validation: has @, has ., reasonable length
-            // Split and check parts
             const parts = normalized.split('@');
             if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0 && parts[1].includes('.')) {
               return normalized;
             }
           }
           
-          console.log('[MailTracker AI] Email validation failed for:', email, '-> normalized:', normalized);
           return null;
         })
         .filter(Boolean)
