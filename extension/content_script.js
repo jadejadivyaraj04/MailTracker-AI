@@ -36,186 +36,327 @@ const initStorageSync = () => {
 
 /**
  * Extract recipients (to/cc/bcc) from the compose dialog
- * Gmail uses complex DOM structure, so we need multiple selectors
+ * Comprehensive extraction using multiple methods to capture all recipients
  */
 const extractRecipients = composeRoot => {
   const recipients = { to: [], cc: [], bcc: [] };
+  const allFoundEmails = new Set();
 
-  // Method 1: Try textarea with name attribute (older Gmail)
+  // Helper function to extract email from text
+  const extractEmailsFromText = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    const emailRegex = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
+    const matches = text.match(emailRegex) || [];
+    return matches.map(email => email.toLowerCase().trim());
+  };
+
+  // Helper function to validate email
+  const isValidEmail = (email) => {
+    if (!email || typeof email !== 'string') return false;
+    const normalized = email.trim().toLowerCase();
+    return /^[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/.test(normalized);
+  };
+
+  // Helper function to extract from "Name <email>" format
+  const extractEmailFromFormat = (text) => {
+    if (!text) return null;
+    const match = text.match(/<([^>]+)>/) || text.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
+    return match ? (match[1] || match[0]).trim().toLowerCase() : null;
+  };
+
+  // Method 1: Extract from textarea elements (older Gmail)
   ['to', 'cc', 'bcc'].forEach(field => {
     const textarea = composeRoot.querySelector(`textarea[name="${field}"]`);
     if (textarea && textarea.value) {
-      // Split by comma and extract emails from "Name <email>" format
       const emails = textarea.value
-        .split(',')
-        .map(item => {
-          const trimmed = item.trim();
-          // Extract email from "Name <email>" format
-          const emailMatch = trimmed.match(/<([^>]+)>/) || trimmed.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
-          return emailMatch ? (emailMatch[1] || emailMatch[0]).trim() : trimmed;
-        })
-        .filter(email => {
-          // Validate it's actually an email
-          return email && /^[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/.test(email);
-        });
+        .split(/[,;]/)
+        .map(item => extractEmailFromFormat(item.trim()) || item.trim().toLowerCase())
+        .filter(isValidEmail);
       if (emails.length) {
-        recipients[field] = emails;
+        recipients[field].push(...emails);
+        emails.forEach(e => allFoundEmails.add(e));
       }
     }
   });
 
-  // Method 2: Try input fields (newer Gmail compose)
-  const toInput = composeRoot.querySelector('input[aria-label*="To"], input[aria-label*="Recipients"]');
-  if (toInput && toInput.value) {
-    const emails = toInput.value
-      .split(',')
-      .map(item => {
-        // Extract email from "Name <email>" format or just email
-        const emailMatch = item.match(/<([^>]+)>/) || item.match(/([\w\.-]+@[\w\.-]+\.\w+)/);
-        return emailMatch ? emailMatch[1] || emailMatch[0] : item.trim();
-      })
-      .map(email => email.trim())
-      .filter(Boolean);
-    if (emails.length && !recipients.to.length) {
-      recipients.to = emails;
-    }
-  }
-
-  // Method 3: Extract from chips/tokens (Gmail's chip-based UI)
-  // Gmail uses specific aria-labels and data attributes for each field
-  const extractFromChips = (fieldName) => {
-    const emails = [];
-    
-    // Find the container for this specific field (To, Cc, or Bcc)
-    const fieldLabels = {
-      'to': ['To', 'Recipients'],
-      'cc': ['Cc', 'CC'],
-      'bcc': ['Bcc', 'BCC']
-    };
-    
-    const labels = fieldLabels[fieldName.toLowerCase()] || [fieldName];
-    
-    // Try to find the field container first
-    let fieldContainer = null;
-    for (const label of labels) {
-      // Look for the field label/header
-      const labelElement = Array.from(composeRoot.querySelectorAll('div, span')).find(el => {
-        const text = el.textContent?.trim() || '';
-        const ariaLabel = el.getAttribute('aria-label') || '';
-        return (text === label || ariaLabel.includes(label)) && 
-               (ariaLabel.toLowerCase().includes('to') || 
-                ariaLabel.toLowerCase().includes('cc') || 
-                ariaLabel.toLowerCase().includes('bcc'));
-      });
-      
-      if (labelElement) {
-        // Find the parent container that holds the chips
-        fieldContainer = labelElement.closest('div[role="textbox"], div[contenteditable="true"], div[aria-label*="' + label + '"]') ||
-                         labelElement.parentElement;
-        if (fieldContainer) break;
-      }
-    }
-    
-    // If we found a container, extract chips from it
-    if (fieldContainer) {
-      // Look for chip elements within this container
-      const chips = fieldContainer.querySelectorAll('[data-email], [email], span[email], div[role="option"]');
-      chips.forEach(chip => {
-        // Try data-email attribute first (most reliable)
-        const dataEmail = chip.getAttribute('data-email') || chip.getAttribute('email');
-        if (dataEmail) {
-          emails.push(dataEmail);
-          return;
-        }
-        
-        // Extract email from text content
-        const text = chip.textContent || '';
-        const emailRegex = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
-        const matches = text.match(emailRegex);
-        if (matches) {
-          emails.push(...matches);
-        }
-      });
-    }
-    
-    // Fallback: Try direct selectors with field-specific aria-labels
-    if (emails.length === 0) {
-      for (const label of labels) {
-        const selector = `div[aria-label*="${label}" i] [data-email], div[aria-label*="${label}" i] [email]`;
-        const chips = composeRoot.querySelectorAll(selector);
-        chips.forEach(chip => {
-          const email = chip.getAttribute('data-email') || chip.getAttribute('email');
-          if (email) emails.push(email);
-        });
-      }
-    }
-    
-    return [...new Set(emails)]; // Remove duplicates
-  };
-
-  // Try to extract from visible chips for each field
-  if (!recipients.to.length) {
-    const toChips = extractFromChips('to');
-    if (toChips.length) recipients.to = toChips;
-  }
-
-  if (!recipients.cc.length) {
-    const ccChips = extractFromChips('cc');
-    if (ccChips.length) recipients.cc = ccChips;
-  }
-
-  if (!recipients.bcc.length) {
-    const bccChips = extractFromChips('bcc');
-    if (bccChips.length) recipients.bcc = bccChips;
-  }
-
-  // Method 4: Try to find email addresses in the compose header area
-  const composeHeader = composeRoot.querySelector('[role="dialog"] > div, .aHl');
-  if (composeHeader && (!recipients.to.length || !recipients.cc.length || !recipients.bcc.length)) {
-    const allText = composeHeader.textContent || '';
-    const allHtml = composeHeader.innerHTML || '';
-    // Improved email regex to handle all valid email formats
-    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
-    const foundEmails = [...(allText.match(emailRegex) || []), ...(allHtml.match(emailRegex) || [])];
-    
-    // If we found emails but couldn't categorize them, put them in "to"
-    if (foundEmails.length && !recipients.to.length && !recipients.cc.length && !recipients.bcc.length) {
-      recipients.to = [...new Set(foundEmails)]; // Remove duplicates
-    }
-  }
-  
-  // Method 5: Try to extract from Gmail's recipient input areas more precisely
-  // Look for each field's input area specifically
+  // Method 2: Extract from input fields
   ['to', 'cc', 'bcc'].forEach(field => {
-    if (recipients[field].length) return; // Skip if already found
-    
-    // Find input areas for this specific field
-    const fieldInputs = composeRoot.querySelectorAll(
-      `div[aria-label*="${field}" i][role="textbox"], 
-       div[aria-label*="${field}" i][contenteditable="true"],
-       textarea[name="${field}"]`
+    const inputs = composeRoot.querySelectorAll(
+      `input[aria-label*="${field}" i],
+       input[name="${field}"],
+       input[placeholder*="${field}" i]`
     );
-    
-    const fieldEmails = [];
-    fieldInputs.forEach(input => {
-      // Get all chips within this input area
-      const chips = input.querySelectorAll('[data-email], [email]');
-      chips.forEach(chip => {
-        const email = chip.getAttribute('data-email') || chip.getAttribute('email');
-        if (email) fieldEmails.push(email);
-      });
-      
-      // Also check the input value itself
-      const value = input.value || input.textContent || '';
-      if (value) {
-        const emailRegex = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
-        const matches = value.match(emailRegex);
-        if (matches) fieldEmails.push(...matches);
+    inputs.forEach(input => {
+      if (input.value) {
+        const emails = input.value
+          .split(/[,;]/)
+          .map(item => extractEmailFromFormat(item.trim()) || item.trim().toLowerCase())
+          .filter(isValidEmail);
+        if (emails.length) {
+          recipients[field].push(...emails);
+          emails.forEach(e => allFoundEmails.add(e));
+        }
       }
     });
+  });
+
+  // Method 3: Comprehensive chip extraction for each field
+  const extractFromChips = (fieldName) => {
+    const emails = new Set();
+    const fieldLabels = {
+      'to': ['To', 'Recipients', 'to'],
+      'cc': ['Cc', 'CC', 'cc'],
+      'bcc': ['Bcc', 'BCC', 'bcc']
+    };
+    const labels = fieldLabels[fieldName.toLowerCase()] || [fieldName];
+
+    // Find all possible containers for this field
+    const containers = [];
     
-    if (fieldEmails.length) {
-      recipients[field] = [...new Set(fieldEmails)];
+    // Method 3a: Find by aria-label containing field name
+    labels.forEach(label => {
+      const containersByAria = composeRoot.querySelectorAll(
+        `div[aria-label*="${label}" i],
+         div[aria-label*="${label}" i][role="textbox"],
+         div[aria-label*="${label}" i][contenteditable="true"],
+         div[data-field="${fieldName}"],
+         div[data-field="${fieldName.toLowerCase()}"]`
+      );
+      containers.push(...Array.from(containersByAria));
+    });
+
+    // Method 3b: Find by text content matching label
+    const allDivs = composeRoot.querySelectorAll('div');
+    allDivs.forEach(div => {
+      const text = div.textContent?.trim() || '';
+      const ariaLabel = div.getAttribute('aria-label') || '';
+      labels.forEach(label => {
+        if ((text === label || ariaLabel.toLowerCase().includes(label.toLowerCase())) &&
+            (ariaLabel.toLowerCase().includes('to') || 
+             ariaLabel.toLowerCase().includes('cc') || 
+             ariaLabel.toLowerCase().includes('bcc'))) {
+          const container = div.closest('div[role="textbox"], div[contenteditable="true"]') || 
+                           div.parentElement;
+          if (container && !containers.includes(container)) {
+            containers.push(container);
+          }
+        }
+      });
+    });
+
+    // Extract from all found containers
+    containers.forEach(container => {
+      // Extract from chip elements with various selectors
+      const chipSelectors = [
+        '[data-email]',
+        '[email]',
+        '[data-value]',
+        '[data-address]',
+        'span[data-email]',
+        'div[data-email]',
+        'span[email]',
+        'div[email]',
+        '[role="option"]',
+        '[role="listbox"] > *',
+        '.chip',
+        '[class*="chip"]',
+        '[class*="Chip"]',
+        '[class*="token"]',
+        '[class*="Token"]'
+      ];
+
+      chipSelectors.forEach(selector => {
+        try {
+          const chips = container.querySelectorAll(selector);
+          chips.forEach(chip => {
+            // Try all possible data attributes
+            const emailAttrs = [
+              chip.getAttribute('data-email'),
+              chip.getAttribute('email'),
+              chip.getAttribute('data-value'),
+              chip.getAttribute('data-address'),
+              chip.getAttribute('data-address-value'),
+              chip.getAttribute('aria-label')
+            ].filter(Boolean);
+
+            emailAttrs.forEach(attr => {
+              const extracted = extractEmailFromFormat(attr) || attr.toLowerCase().trim();
+              if (isValidEmail(extracted)) {
+                emails.add(extracted);
+              }
+            });
+
+            // Extract from text content
+            const text = chip.textContent || chip.innerText || '';
+            const textEmails = extractEmailsFromText(text);
+            textEmails.forEach(e => {
+              if (isValidEmail(e)) emails.add(e);
+            });
+
+            // Extract from all attributes
+            Array.from(chip.attributes).forEach(attr => {
+              if (attr.value && attr.value.includes('@')) {
+                const attrEmails = extractEmailsFromText(attr.value);
+                attrEmails.forEach(e => {
+                  if (isValidEmail(e)) emails.add(e);
+                });
+              }
+            });
+          });
+        } catch (e) {
+          // Ignore selector errors
+        }
+      });
+
+      // Extract from container's own text content
+      const containerText = container.textContent || container.innerText || '';
+      const containerEmails = extractEmailsFromText(containerText);
+      containerEmails.forEach(e => {
+        if (isValidEmail(e)) emails.add(e);
+      });
+
+      // Extract from container's innerHTML
+      const containerHtml = container.innerHTML || '';
+      const htmlEmails = extractEmailsFromText(containerHtml);
+      htmlEmails.forEach(e => {
+        if (isValidEmail(e)) emails.add(e);
+      });
+    });
+
+    return Array.from(emails);
+  };
+
+  // Extract from chips for each field (only if not already found)
+  ['to', 'cc', 'bcc'].forEach(field => {
+    if (recipients[field].length === 0) {
+      const chipEmails = extractFromChips(field);
+      if (chipEmails.length) {
+        recipients[field].push(...chipEmails);
+        chipEmails.forEach(e => allFoundEmails.add(e));
+      }
+    }
+  });
+
+  // Method 4: Extract from all contenteditable/role="textbox" elements with field-specific aria-labels
+  ['to', 'cc', 'bcc'].forEach(field => {
+    if (recipients[field].length === 0) {
+      const fieldInputs = composeRoot.querySelectorAll(
+        `div[aria-label*="${field}" i][role="textbox"],
+         div[aria-label*="${field}" i][contenteditable="true"],
+         div[contenteditable="true"][aria-label*="${field}" i]`
+      );
+      
+      const fieldEmails = new Set();
+      fieldInputs.forEach(input => {
+        // Get all text from this input
+        const text = input.textContent || input.innerText || input.value || '';
+        const html = input.innerHTML || '';
+        
+        // Extract emails from text
+        extractEmailsFromText(text).forEach(e => {
+          if (isValidEmail(e)) fieldEmails.add(e);
+        });
+        extractEmailsFromText(html).forEach(e => {
+          if (isValidEmail(e)) fieldEmails.add(e);
+        });
+
+        // Get all child elements and extract from them
+        const allChildren = input.querySelectorAll('*');
+        allChildren.forEach(child => {
+          const childText = child.textContent || child.innerText || '';
+          const childHtml = child.innerHTML || '';
+          extractEmailsFromText(childText).forEach(e => {
+            if (isValidEmail(e)) fieldEmails.add(e);
+          });
+          extractEmailsFromText(childHtml).forEach(e => {
+            if (isValidEmail(e)) fieldEmails.add(e);
+          });
+        });
+      });
+      
+      if (fieldEmails.size > 0) {
+        recipients[field].push(...Array.from(fieldEmails));
+        fieldEmails.forEach(e => allFoundEmails.add(e));
+      }
+    }
+  });
+
+  // Method 5: Extract from entire compose header as fallback
+  if (recipients.to.length === 0 && recipients.cc.length === 0 && recipients.bcc.length === 0) {
+    const composeHeader = composeRoot.querySelector('[role="dialog"] > div, .aHl, [class*="compose"]');
+    if (composeHeader) {
+      const allText = composeHeader.textContent || composeHeader.innerText || '';
+      const allHtml = composeHeader.innerHTML || '';
+      const foundEmails = [
+        ...extractEmailsFromText(allText),
+        ...extractEmailsFromText(allHtml)
+      ].filter(isValidEmail);
+      
+      if (foundEmails.length) {
+        recipients.to.push(...foundEmails);
+        foundEmails.forEach(e => allFoundEmails.add(e));
+      }
+    }
+  }
+
+  // Method 6: Comprehensive deep search - extract from ALL elements in compose dialog
+  // This catches any emails that might be in hidden elements or unusual structures
+  ['to', 'cc', 'bcc'].forEach(field => {
+    // Only do deep search if we haven't found recipients for this field
+    if (recipients[field].length === 0) {
+      // Find the field label/header first
+      const fieldLabels = {
+        'to': ['To', 'Recipients'],
+        'cc': ['Cc', 'CC'],
+        'bcc': ['Bcc', 'BCC']
+      };
+      const labels = fieldLabels[field.toLowerCase()] || [];
+      
+      // Find all elements that might be related to this field
+      labels.forEach(label => {
+        // Find elements containing the label
+        const labelElements = Array.from(composeRoot.querySelectorAll('*')).filter(el => {
+          const text = el.textContent?.trim() || '';
+          const ariaLabel = el.getAttribute('aria-label') || '';
+          return (text === label || ariaLabel.toLowerCase().includes(label.toLowerCase())) &&
+                 (ariaLabel.toLowerCase().includes(field.toLowerCase()));
+        });
+
+        labelElements.forEach(labelEl => {
+          // Get the parent container
+          const container = labelEl.closest('div[role="textbox"], div[contenteditable="true"], div') || 
+                           labelEl.parentElement;
+          
+          if (container) {
+            // Search all descendants for emails
+            const allElements = container.querySelectorAll('*');
+            allElements.forEach(el => {
+              // Check text content
+              const text = el.textContent || el.innerText || '';
+              const emails = extractEmailsFromText(text);
+              emails.forEach(e => {
+                if (isValidEmail(e) && !allFoundEmails.has(e)) {
+                  recipients[field].push(e);
+                  allFoundEmails.add(e);
+                }
+              });
+
+              // Check all attributes
+              Array.from(el.attributes).forEach(attr => {
+                if (attr.value && attr.value.includes('@')) {
+                  const attrEmails = extractEmailsFromText(attr.value);
+                  attrEmails.forEach(e => {
+                    if (isValidEmail(e) && !allFoundEmails.has(e)) {
+                      recipients[field].push(e);
+                      allFoundEmails.add(e);
+                    }
+                  });
+                }
+              });
+            });
+          }
+        });
+      });
     }
   });
 
@@ -278,62 +419,61 @@ const extractRecipients = composeRoot => {
     return [];
   };
 
-  // Clean up and normalize emails
+  // Clean up, normalize, and deduplicate emails
   Object.keys(recipients).forEach(key => {
     if (!recipients[key] || !Array.isArray(recipients[key]) || !recipients[key].length) {
       delete recipients[key];
     } else {
-      // First, try to split any concatenated emails
-      const allEmails = [];
+      // Normalize and validate all emails
+      const normalizedEmails = new Set();
+      
       recipients[key].forEach(email => {
         if (!email || typeof email !== 'string') return;
         
         // Extract email from "Name <email>" format if present
-        const emailMatch = email.match(/<([^>]+)>/) || email.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
-        const cleanEmail = emailMatch ? (emailMatch[1] || emailMatch[0]) : email;
+        const cleanEmail = extractEmailFromFormat(email) || email.trim().toLowerCase();
         
-        // Split concatenated emails
+        // Split concatenated emails (if any)
         const splitEmails = splitConcatenatedEmails(cleanEmail);
-        allEmails.push(...splitEmails);
+        if (splitEmails.length > 0) {
+          splitEmails.forEach(e => {
+            const normalized = e.trim().toLowerCase();
+            if (isValidEmail(normalized)) {
+              normalizedEmails.add(normalized);
+            }
+          });
+        } else {
+          // Single email
+          const normalized = cleanEmail.trim().toLowerCase();
+          if (isValidEmail(normalized)) {
+            normalizedEmails.add(normalized);
+          }
+        }
       });
       
-      // Normalize and validate
-      const originalCount = allEmails.length;
-      recipients[key] = allEmails
-        .map(email => {
-          if (!email || typeof email !== 'string') return null;
-          
-          const normalized = email.trim().toLowerCase();
-          
-          // Basic validation: has @, has ., reasonable length
-          if (normalized && normalized.includes('@') && normalized.includes('.') && normalized.length > 5) {
-            const parts = normalized.split('@');
-            if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0 && parts[1].includes('.')) {
-              return normalized;
-            }
-          }
-          
-          return null;
-        })
-        .filter(Boolean)
-        .filter((email, index, array) => array.indexOf(email) === index); // Remove duplicates
-      
-      // Log if emails were filtered out
-      if (recipients[key].length === 0 && originalCount > 0) {
-        console.warn(`[MailTracker AI] All ${originalCount} emails in ${key} were filtered out during validation`);
-      } else if (recipients[key].length < originalCount) {
-        console.log(`[MailTracker AI] Filtered ${originalCount - recipients[key].length} invalid emails from ${key}`);
-      }
+      // Convert Set back to array
+      recipients[key] = Array.from(normalizedEmails);
       
       // Delete if empty after filtering
       if (recipients[key].length === 0) {
         delete recipients[key];
+      } else {
+        console.log(`[MailTracker AI] Extracted ${recipients[key].length} ${key} recipient(s):`, recipients[key]);
       }
     }
   });
 
-  // Debug logging
-  console.log('[MailTracker AI] Extracted recipients (normalized):', recipients);
+  // Final debug logging with summary
+  const totalRecipients = (recipients.to?.length || 0) + 
+                          (recipients.cc?.length || 0) + 
+                          (recipients.bcc?.length || 0);
+  console.log('[MailTracker AI] Final extracted recipients:', {
+    to: recipients.to?.length || 0,
+    cc: recipients.cc?.length || 0,
+    bcc: recipients.bcc?.length || 0,
+    total: totalRecipients,
+    details: recipients
+  });
 
   return recipients;
 };
@@ -510,6 +650,46 @@ const registerMessage = async ({ uid, recipients, subject }) => {
 };
 
 /**
+ * Extract recipients with retry mechanism to handle DOM updates
+ * Gmail's chips might not be fully rendered immediately
+ */
+const extractRecipientsWithRetry = async (composeRoot, maxRetries = 3, delay = 100) => {
+  let bestResult = { to: [], cc: [], bcc: [] };
+  let bestTotal = 0;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (attempt > 0) {
+      // Wait a bit for DOM to update
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    const result = extractRecipients(composeRoot);
+    const total = (result.to?.length || 0) + (result.cc?.length || 0) + (result.bcc?.length || 0);
+
+    // If we found more recipients, use this result
+    if (total > bestTotal) {
+      bestResult = result;
+      bestTotal = total;
+      console.log(`[MailTracker AI] Attempt ${attempt + 1}: Found ${total} recipients`);
+    }
+
+    // If we found recipients in all fields, we can stop early
+    if (bestTotal > 0 && 
+        (result.to?.length || 0) > 0 && 
+        (result.cc?.length || 0) >= 0 && 
+        (result.bcc?.length || 0) >= 0) {
+      // Check if we're getting consistent results
+      if (attempt > 0 && total === bestTotal) {
+        console.log(`[MailTracker AI] Consistent result after ${attempt + 1} attempts, using it`);
+        break;
+      }
+    }
+  }
+
+  return bestResult;
+};
+
+/**
  * Handle click on Gmail send buttons and wire up tracking
  */
 const handleSendClick = async event => {
@@ -520,27 +700,36 @@ const handleSendClick = async event => {
   const button = event.currentTarget;
   const composeRoot = button.closest('div[role="dialog"], td.Bu');
   if (!composeRoot) {
+    console.warn('[MailTracker AI] Compose root not found');
     return;
   }
 
-  const bodyEl = composeRoot.querySelector('div[aria-label="Message Body"], div.editable');
-  const subjectInput = composeRoot.querySelector('input[name="subjectbox"]');
+  const bodyEl = composeRoot.querySelector('div[aria-label="Message Body"], div.editable, div[contenteditable="true"]');
+  const subjectInput = composeRoot.querySelector('input[name="subjectbox"], input[aria-label*="Subject" i]');
 
   if (!bodyEl) {
-    console.warn('MailTracker AI: Message body not found');
+    console.warn('[MailTracker AI] Message body not found');
     return;
   }
 
   const uid = generateUUID();
-  const recipients = extractRecipients(composeRoot);
+  
+  // Extract recipients with retry mechanism to ensure we get all of them
+  const recipients = await extractRecipientsWithRetry(composeRoot);
   const subject = subjectInput ? subjectInput.value : '';
 
-  // Debug: Log what we extracted
-  console.log('[MailTracker AI] Extracted recipients:', recipients);
-  console.log('[MailTracker AI] Extracted subject:', subject);
+  // Final check: Log what we extracted
+  const totalRecipients = (recipients.to?.length || 0) + 
+                          (recipients.cc?.length || 0) + 
+                          (recipients.bcc?.length || 0);
+  
+  if (totalRecipients === 0) {
+    console.warn('[MailTracker AI] No recipients found! This might indicate an extraction issue.');
+  } else {
+    console.log(`[MailTracker AI] Successfully extracted ${totalRecipients} recipient(s) before send`);
+  }
 
   // Register message first to get recipient tokens
-  // Use a short timeout to allow registration to complete before send
   const recipientTokens = await registerMessage({ uid, recipients, subject });
   
   // Add tracking pixels with recipient tokens (if available)
