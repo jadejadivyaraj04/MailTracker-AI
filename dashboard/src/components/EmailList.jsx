@@ -10,6 +10,26 @@ const formatDateTime = value => {
   }
 };
 
+const formatTimeAgo = value => {
+  if (!value) return '';
+  try {
+    const now = new Date();
+    const then = new Date(value);
+    const diffMs = now - then;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return formatDateTime(value);
+  } catch (error) {
+    return '';
+  }
+};
+
 function EmailList({ messages = [] }) {
   if (!messages.length) {
     return <p className="text-sm text-slate-500">No tracked emails yet. Send a message with the Chrome extension installed.</p>;
@@ -26,80 +46,141 @@ function EmailList({ messages = [] }) {
 
         const recipientStatus = message.recipientStatus || [];
         const isSingleRecipient = allRecipients.length === 1;
+        const toRecipients = message.recipients?.to || [];
+        const ccRecipients = message.recipients?.cc || [];
+        const bccRecipients = message.recipients?.bcc || [];
 
         return (
-          <article key={message.uid} className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 transition hover:border-brand-200 hover:shadow-sm">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex-1">
-                <h3 className="text-base font-medium text-slate-800">{message.subject || 'Untitled email'}</h3>
-                <p className="text-sm text-slate-500">Sent {formatDateTime(message.sentAt)}</p>
-                <p className="text-xs text-slate-400 mt-1">
-                  To: {allRecipients.length ? allRecipients.join(', ') : '—'}
-                  {message.recipients?.cc?.length ? ` | CC: ${message.recipients.cc.join(', ')}` : ''}
+          <article key={message.uid} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-brand-300 hover:shadow-md">
+            {/* Header */}
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-slate-900 mb-1 truncate">
+                  {message.subject || 'Untitled email'}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Sent {formatDateTime(message.sentAt)}
                 </p>
               </div>
-              <div className="flex gap-6 text-sm sm:text-right">
-                <div>
-                  <p className="font-semibold text-brand-600">{message.openCount}</p>
-                  <p className="text-xs text-slate-500">Opens</p>
+              
+              {/* Stats badges */}
+              <div className="flex gap-3 shrink-0">
+                <div className="text-center">
+                  <div className="text-xl font-bold text-brand-600">{message.openCount}</div>
+                  <div className="text-xs text-slate-500">Opens</div>
                 </div>
-                <div>
-                  <p className="font-semibold text-emerald-600">{message.clickCount}</p>
-                  <p className="text-xs text-slate-500">Clicks</p>
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-700">{formatDateTime(message.lastOpenedAt)}</p>
-                  <p className="text-xs text-slate-500">Last open</p>
+                <div className="text-center">
+                  <div className="text-xl font-bold text-emerald-600">{message.clickCount}</div>
+                  <div className="text-xs text-slate-500">Clicks</div>
                 </div>
               </div>
             </div>
 
-            {/* Recipient Read Status */}
-            {isSingleRecipient && recipientStatus.length > 0 && (
-              <div className="mt-2 pt-3 border-t border-slate-100">
-                <p className="text-xs font-medium text-slate-600 mb-2">Recipient Status:</p>
-                <div className="flex flex-wrap gap-2">
-                  {recipientStatus.map((status, idx) => (
-                    <div
-                      key={idx}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                        status.read
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-slate-50 text-slate-600 border border-slate-200'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${status.read ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                      <span className="truncate max-w-[200px]">{status.email}</span>
-                      <span className="font-semibold">{status.read ? '✓ Read' : '○ Not read'}</span>
-                      {status.read && status.readAt && (
-                        <span className="text-[10px] opacity-75">
-                          {formatDateTime(status.readAt)}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+            {/* Sent To Section */}
+            <div className="mb-4 pb-4 border-b border-slate-100">
+              <div className="flex items-start gap-2 mb-2">
+                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Sent To:</span>
+                <div className="flex-1 flex flex-wrap gap-2">
+                  {toRecipients.length > 0 ? (
+                    toRecipients.map((email, idx) => (
+                      <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                        {email}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-400 italic">No recipients found</span>
+                  )}
                 </div>
               </div>
-            )}
+              
+              {ccRecipients.length > 0 && (
+                <div className="flex items-start gap-2 mb-2">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">CC:</span>
+                  <div className="flex-1 flex flex-wrap gap-2">
+                    {ccRecipients.map((email, idx) => (
+                      <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                        {email}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-            {/* Multiple recipients - show summary */}
-            {!isSingleRecipient && allRecipients.length > 0 && (
-              <div className="mt-2 pt-3 border-t border-slate-100">
-                <p className="text-xs font-medium text-slate-600 mb-2">
-                  Recipients ({allRecipients.length}): {message.openCount > 0 ? 'At least one opened' : 'Not opened yet'}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {allRecipients.map((email, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-block rounded px-2 py-0.5 text-xs bg-slate-100 text-slate-600 border border-slate-200"
-                    >
-                      {email}
-                    </span>
-                  ))}
+              {bccRecipients.length > 0 && (
+                <div className="flex items-start gap-2">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">BCC:</span>
+                  <div className="flex-1 flex flex-wrap gap-2">
+                    {bccRecipients.map((email, idx) => (
+                      <span key={idx} className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                        {email}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Read By Section */}
+            {isSingleRecipient && recipientStatus.length > 0 ? (
+              <div>
+                <div className="flex items-start gap-2 mb-3">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Read By:</span>
+                  <div className="flex-1">
+                    {recipientStatus.map((status, idx) => (
+                      <div
+                        key={idx}
+                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium mb-2 ${
+                          status.read
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-slate-50 text-slate-600 border border-slate-200'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${status.read ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                        <span className="font-semibold">{status.email}</span>
+                        <span className={`text-xs ${status.read ? 'text-emerald-700' : 'text-slate-500'}`}>
+                          {status.read ? (
+                            <>
+                              <span className="font-bold">✓ Read</span>
+                              {status.readAt && (
+                                <span className="ml-1 opacity-75">
+                                  {formatTimeAgo(status.readAt)}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span>○ Not read</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            )}
+            ) : allRecipients.length > 0 ? (
+              <div>
+                <div className="flex items-start gap-2">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Read Status:</span>
+                  <div className="flex-1">
+                    {message.openCount > 0 ? (
+                      <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-amber-50 text-amber-800 border border-amber-200">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                        <span className="font-medium">At least one recipient opened</span>
+                        {message.lastOpenedAt && (
+                          <span className="text-xs opacity-75 ml-1">
+                            ({formatTimeAgo(message.lastOpenedAt)})
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-slate-50 text-slate-600 border border-slate-200">
+                        <span className="w-2 h-2 rounded-full bg-slate-400" />
+                        <span className="font-medium">Not opened yet</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </article>
         );
       })}

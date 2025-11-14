@@ -36,21 +36,83 @@ const initStorageSync = () => {
 
 /**
  * Extract recipients (to/cc/bcc) from the compose dialog
+ * Gmail uses complex DOM structure, so we need multiple selectors
  */
 const extractRecipients = composeRoot => {
-  const fields = ['to', 'cc', 'bcc'];
-  const recipients = {};
+  const recipients = { to: [], cc: [], bcc: [] };
 
-  fields.forEach(field => {
+  // Method 1: Try textarea with name attribute (older Gmail)
+  ['to', 'cc', 'bcc'].forEach(field => {
     const textarea = composeRoot.querySelector(`textarea[name="${field}"]`);
-    if (textarea) {
-      const value = textarea.value
+    if (textarea && textarea.value) {
+      const emails = textarea.value
         .split(',')
         .map(item => item.trim())
         .filter(Boolean);
-      if (value.length) {
-        recipients[field] = value;
+      if (emails.length) {
+        recipients[field] = emails;
       }
+    }
+  });
+
+  // Method 2: Try input fields (newer Gmail compose)
+  const toInput = composeRoot.querySelector('input[aria-label*="To"], input[aria-label*="Recipients"]');
+  if (toInput && toInput.value) {
+    const emails = toInput.value
+      .split(',')
+      .map(item => item.trim().replace(/<.*?>/, '').trim()) // Remove name tags like "Name <email>"
+      .filter(Boolean);
+    if (emails.length && !recipients.to.length) {
+      recipients.to = emails;
+    }
+  }
+
+  // Method 3: Extract from chips/tokens (Gmail's chip-based UI)
+  const extractFromChips = (labelText) => {
+    const chips = composeRoot.querySelectorAll(`span[aria-label*="${labelText}"], div[aria-label*="${labelText}"]`);
+    const emails = [];
+    chips.forEach(chip => {
+      const emailMatch = chip.textContent.match(/[\w\.-]+@[\w\.-]+\.\w+/);
+      if (emailMatch) {
+        emails.push(emailMatch[0]);
+      }
+    });
+    return emails;
+  };
+
+  // Try to extract from visible chips
+  if (!recipients.to.length) {
+    const toChips = extractFromChips('To');
+    if (toChips.length) recipients.to = toChips;
+  }
+
+  if (!recipients.cc.length) {
+    const ccChips = extractFromChips('Cc');
+    if (ccChips.length) recipients.cc = ccChips;
+  }
+
+  if (!recipients.bcc.length) {
+    const bccChips = extractFromChips('Bcc');
+    if (bccChips.length) recipients.bcc = bccChips;
+  }
+
+  // Method 4: Try to find email addresses in the compose header area
+  const composeHeader = composeRoot.querySelector('[role="dialog"] > div, .aHl');
+  if (composeHeader && (!recipients.to.length || !recipients.cc.length || !recipients.bcc.length)) {
+    const allText = composeHeader.textContent || '';
+    const emailRegex = /[\w\.-]+@[\w\.-]+\.\w+/g;
+    const foundEmails = allText.match(emailRegex) || [];
+    
+    // If we found emails but couldn't categorize them, put them in "to"
+    if (foundEmails.length && !recipients.to.length && !recipients.cc.length && !recipients.bcc.length) {
+      recipients.to = [...new Set(foundEmails)]; // Remove duplicates
+    }
+  }
+
+  // Clean up empty arrays
+  Object.keys(recipients).forEach(key => {
+    if (!recipients[key].length) {
+      delete recipients[key];
     }
   });
 
@@ -83,25 +145,68 @@ const appendTrackingPixel = (bodyEl, uid) => {
  */
 const rewriteLinks = (bodyEl, uid) => {
   if (!bodyEl) return;
+  
+  // Get all links including those in iframes (Gmail's compose editor)
   const links = bodyEl.querySelectorAll('a[href]');
+  
   links.forEach(link => {
     const href = link.getAttribute('href');
 
-    if (!href || href.startsWith(MAILTRACKER_BACKEND_BASE)) {
-      return; // already rewritten or invalid
+    // Skip if already rewritten, invalid, or mailto links
+    if (!href || 
+        href.startsWith(MAILTRACKER_BACKEND_BASE) || 
+        href.startsWith('mailto:') ||
+        href.startsWith('javascript:') ||
+        href.startsWith('#') ||
+        href.trim() === '') {
+      return;
+    }
+
+    // Only rewrite http/https links
+    if (!href.match(/^https?:\/\//i)) {
+      return;
     }
 
     const redirectUrl = `${MAILTRACKER_BACKEND_BASE}/redirect?uid=${encodeURIComponent(uid)}&to=${encodeURIComponent(href)}`;
     link.setAttribute('href', redirectUrl);
+    
+    // Also update the href property directly (some editors use this)
+    if (link.href) {
+      link.href = redirectUrl;
+    }
   });
+
+  // Also check innerHTML for links that might be added later
+  const htmlContent = bodyEl.innerHTML || '';
+  if (htmlContent.includes('href=') && !htmlContent.includes(MAILTRACKER_BACKEND_BASE)) {
+    // Replace links in HTML content
+    const linkRegex = /(<a\s+[^>]*href=["'])(https?:\/\/[^"']+)(["'][^>]*>)/gi;
+    const updatedHtml = htmlContent.replace(linkRegex, (match, prefix, url, suffix) => {
+      if (url.startsWith(MAILTRACKER_BACKEND_BASE)) return match;
+      const trackedUrl = `${MAILTRACKER_BACKEND_BASE}/redirect?uid=${encodeURIComponent(uid)}&to=${encodeURIComponent(url)}`;
+      return `${prefix}${trackedUrl}${suffix}`;
+    });
+    
+    if (updatedHtml !== htmlContent) {
+      bodyEl.innerHTML = updatedHtml;
+    }
+  }
 };
 
 /**
  * Send metadata about the outgoing email to the backend
  */
 const registerMessage = async ({ uid, recipients, subject }) => {
+  // Debug logging
+  console.log('[MailTracker AI] Registering message:', {
+    uid,
+    subject,
+    recipients,
+    userId
+  });
+
   try {
-    await fetch(`${MAILTRACKER_BACKEND_BASE}/register`, {
+    const response = await fetch(`${MAILTRACKER_BACKEND_BASE}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -113,6 +218,13 @@ const registerMessage = async ({ uid, recipients, subject }) => {
       })
     });
 
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log('[MailTracker AI] Message registered successfully:', result);
+
     chrome.runtime.sendMessage({
       type: 'mailtracker:notify',
       payload: {
@@ -121,7 +233,8 @@ const registerMessage = async ({ uid, recipients, subject }) => {
       }
     });
   } catch (error) {
-    console.error('MailTracker AI register error', error);
+    console.error('[MailTracker AI] Register error:', error);
+    console.error('[MailTracker AI] Failed to register:', { uid, recipients, subject });
   }
 };
 
@@ -153,6 +266,10 @@ const handleSendClick = event => {
 
   const recipients = extractRecipients(composeRoot);
   const subject = subjectInput ? subjectInput.value : '';
+
+  // Debug: Log what we extracted
+  console.log('[MailTracker AI] Extracted recipients:', recipients);
+  console.log('[MailTracker AI] Extracted subject:', subject);
 
   registerMessage({ uid, recipients, subject });
 };
