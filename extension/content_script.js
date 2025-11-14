@@ -125,7 +125,9 @@ const extractRecipients = composeRoot => {
       containers.push(...Array.from(containersByAria));
     });
 
-    // Method 3b: Find by text content matching label (especially important for CC)
+    // Method 3b: Find by text content matching label
+    // For TO, use simpler logic that was working before
+    // For CC, use more aggressive matching
     const allDivs = composeRoot.querySelectorAll('div, span');
     allDivs.forEach(el => {
       const text = el.textContent?.trim() || '';
@@ -138,46 +140,48 @@ const extractRecipients = composeRoot => {
         const ariaLower = ariaLabel.toLowerCase();
         const titleLower = title.toLowerCase();
         
-        // Check if this element matches the field label
-        const matchesLabel = textLower === labelLower || 
-                           textLower.startsWith(labelLower + ':') ||
-                           textLower.startsWith(labelLower + ' ') ||
-                           ariaLower.includes(labelLower) ||
-                           titleLower.includes(labelLower);
+        let matchesLabel = false;
         
-        // For CC specifically, also check for "cc" in various forms
-        const isCCField = fieldName.toLowerCase() === 'cc' && (
-          textLower.includes('cc') || 
-          ariaLower.includes('cc') ||
-          titleLower.includes('cc')
-        );
+        // For TO field, use simpler matching (what was working before)
+        if (fieldName.toLowerCase() === 'to') {
+          matchesLabel = textLower === labelLower || 
+                        textLower === 'to' ||
+                        textLower === 'recipients' ||
+                        ariaLower.includes('to') ||
+                        ariaLower.includes('recipients');
+        }
+        // For CC, use more aggressive matching
+        else if (fieldName.toLowerCase() === 'cc') {
+          matchesLabel = textLower === labelLower || 
+                        textLower === 'cc' ||
+                        textLower === 'cc:' ||
+                        textLower.startsWith('cc ') ||
+                        textLower.startsWith('cc:') ||
+                        ariaLower.includes('cc') ||
+                        titleLower.includes('cc');
+        }
+        // For BCC
+        else {
+          matchesLabel = textLower === labelLower || 
+                        ariaLower.includes(labelLower) ||
+                        titleLower.includes(labelLower);
+        }
         
-        if (matchesLabel || (isCCField && (textLower.includes('cc') || ariaLower.includes('cc')))) {
+        if (matchesLabel) {
           // Find the container that holds the recipient chips
           let container = el.closest('div[role="textbox"], div[contenteditable="true"]');
           
-          // If not found, look for sibling or parent containers
-          if (!container) {
-            // Check if there's a sibling that's a textbox
+          // If not found, look for sibling containers (especially for CC)
+          if (!container && fieldName.toLowerCase() === 'cc') {
             let sibling = el.nextElementSibling;
-            while (sibling && !container) {
+            let attempts = 0;
+            while (sibling && attempts < 5) {
               if (sibling.matches('div[role="textbox"], div[contenteditable="true"]')) {
                 container = sibling;
                 break;
               }
               sibling = sibling.nextElementSibling;
-            }
-          }
-          
-          // Still not found? Check parent and its siblings
-          if (!container) {
-            const parent = el.parentElement;
-            if (parent) {
-              const parentSiblings = Array.from(parent.parentElement?.children || []);
-              const textboxSibling = parentSiblings.find(sib => 
-                sib.matches('div[role="textbox"], div[contenteditable="true"]')
-              );
-              if (textboxSibling) container = textboxSibling;
+              attempts++;
             }
           }
           
@@ -188,7 +192,6 @@ const extractRecipients = composeRoot => {
           
           if (container && !containers.includes(container)) {
             containers.push(container);
-            console.log(`[MailTracker AI] Found ${fieldName} container via label matching:`, container);
           }
         }
       });
@@ -276,16 +279,20 @@ const extractRecipients = composeRoot => {
     return Array.from(emails);
   };
 
-  // Extract from chips for each field (only if not already found)
+  // Extract from chips for each field
+  // Always try extraction - don't skip if field already has emails (might find more)
   ['to', 'cc', 'bcc'].forEach(field => {
-    if (recipients[field].length === 0) {
-      const chipEmails = extractFromChips(field);
-      if (chipEmails.length) {
-        recipients[field].push(...chipEmails);
-        chipEmails.forEach(e => allFoundEmails.add(e));
+    const chipEmails = extractFromChips(field);
+    if (chipEmails.length) {
+      // Only add emails that aren't already in the list
+      chipEmails.forEach(email => {
+        if (!allFoundEmails.has(email)) {
+          recipients[field].push(email);
+          allFoundEmails.add(email);
+        }
+      });
+      if (chipEmails.length > 0) {
         console.log(`[MailTracker AI] Extracted ${chipEmails.length} ${field} recipient(s) from chips:`, chipEmails);
-      } else {
-        console.log(`[MailTracker AI] No ${field} recipients found via chip extraction`);
       }
     }
   });
@@ -393,92 +400,83 @@ const extractRecipients = composeRoot => {
   }
 
   // Method 4: Extract from all contenteditable/role="textbox" elements with field-specific aria-labels
+  // Always try - don't skip if already found (might find more)
   ['to', 'cc', 'bcc'].forEach(field => {
-    if (recipients[field].length === 0) {
-      // For CC, use more aggressive selectors
-      const selectors = field.toLowerCase() === 'cc' ? [
-        `div[aria-label*="${field}" i][role="textbox"]`,
-        `div[aria-label*="${field}" i][contenteditable="true"]`,
-        `div[contenteditable="true"][aria-label*="${field}" i]`,
-        `div[aria-label*="Cc" i][role="textbox"]`,
-        `div[aria-label*="Cc" i][contenteditable="true"]`,
-        `div[aria-label*="CC" i][role="textbox"]`,
-        `div[aria-label*="CC" i][contenteditable="true"]`,
-        // Also try finding by position (CC is usually after TO)
-        `div[role="textbox"]:nth-of-type(2)`,
-        `div[contenteditable="true"]:nth-of-type(2)`
-      ] : [
-        `div[aria-label*="${field}" i][role="textbox"],
-         div[aria-label*="${field}" i][contenteditable="true"],
-         div[contenteditable="true"][aria-label*="${field}" i]`
-      ];
+    // For CC, use more aggressive selectors
+    const selectors = field.toLowerCase() === 'cc' ? [
+      `div[aria-label*="${field}" i][role="textbox"]`,
+      `div[aria-label*="${field}" i][contenteditable="true"]`,
+      `div[contenteditable="true"][aria-label*="${field}" i]`,
+      `div[aria-label*="Cc" i][role="textbox"]`,
+      `div[aria-label*="Cc" i][contenteditable="true"]`,
+      `div[aria-label*="CC" i][role="textbox"]`,
+      `div[aria-label*="CC" i][contenteditable="true"]`,
+      // Also try finding by position (CC is usually after TO)
+      `div[role="textbox"]:nth-of-type(2)`,
+      `div[contenteditable="true"]:nth-of-type(2)`
+    ] : [
+      `div[aria-label*="${field}" i][role="textbox"],
+       div[aria-label*="${field}" i][contenteditable="true"],
+       div[contenteditable="true"][aria-label*="${field}" i]`
+    ];
+    
+    const fieldInputs = composeRoot.querySelectorAll(selectors.join(', '));
+    
+    const fieldEmails = new Set();
+    fieldInputs.forEach((input, index) => {
+      // Get all text from this input
+      const text = input.textContent || input.innerText || input.value || '';
+      const html = input.innerHTML || '';
+      const ariaLabel = input.getAttribute('aria-label') || '';
       
-      const fieldInputs = composeRoot.querySelectorAll(selectors.join(', '));
-      
-      console.log(`[MailTracker AI] Method 4: Found ${fieldInputs.length} potential ${field} input(s)`);
-      
-      const fieldEmails = new Set();
-      fieldInputs.forEach((input, index) => {
-        // Get all text from this input
-        const text = input.textContent || input.innerText || input.value || '';
-        const html = input.innerHTML || '';
-        const ariaLabel = input.getAttribute('aria-label') || '';
-        
-        // For CC, verify this is actually a CC field (not TO or BCC)
-        if (field.toLowerCase() === 'cc') {
-          const ariaLower = ariaLabel.toLowerCase();
-          // Skip if this is clearly TO or BCC
-          if (ariaLower.includes('to') && !ariaLower.includes('cc') && !ariaLower.includes('bcc')) {
-            return; // This is TO, skip
-          }
-          if (ariaLower.includes('bcc') && !ariaLower.includes('cc')) {
-            return; // This is BCC, skip
-          }
+      // For CC, verify this is actually a CC field (not TO or BCC)
+      if (field.toLowerCase() === 'cc') {
+        const ariaLower = ariaLabel.toLowerCase();
+        // Skip if this is clearly TO or BCC
+        if (ariaLower.includes('to') && !ariaLower.includes('cc') && !ariaLower.includes('bcc')) {
+          return; // This is TO, skip
         }
-        
-        console.log(`[MailTracker AI] Processing ${field} input ${index + 1}, aria-label: "${ariaLabel}", text length: ${text.length}`);
-        
-        // Extract emails from text
-        extractEmailsFromText(text).forEach(e => {
-          if (isValidEmail(e)) {
-            fieldEmails.add(e);
-            console.log(`[MailTracker AI] Found ${field} email in text: ${e}`);
-          }
-        });
-        extractEmailsFromText(html).forEach(e => {
-          if (isValidEmail(e)) {
-            fieldEmails.add(e);
-            console.log(`[MailTracker AI] Found ${field} email in HTML: ${e}`);
-          }
-        });
+        if (ariaLower.includes('bcc') && !ariaLower.includes('cc')) {
+          return; // This is BCC, skip
+        }
+      }
+      
+      // Extract emails from text
+      extractEmailsFromText(text).forEach(e => {
+        if (isValidEmail(e) && !allFoundEmails.has(e)) {
+          fieldEmails.add(e);
+        }
+      });
+      extractEmailsFromText(html).forEach(e => {
+        if (isValidEmail(e) && !allFoundEmails.has(e)) {
+          fieldEmails.add(e);
+        }
+      });
 
-        // Get all child elements and extract from them
-        const allChildren = input.querySelectorAll('*');
-        allChildren.forEach(child => {
-          const childText = child.textContent || child.innerText || '';
-          const childHtml = child.innerHTML || '';
-          extractEmailsFromText(childText).forEach(e => {
-            if (isValidEmail(e)) {
-              fieldEmails.add(e);
-              console.log(`[MailTracker AI] Found ${field} email in child text: ${e}`);
-            }
-          });
-          extractEmailsFromText(childHtml).forEach(e => {
-            if (isValidEmail(e)) {
-              fieldEmails.add(e);
-              console.log(`[MailTracker AI] Found ${field} email in child HTML: ${e}`);
-            }
-          });
+      // Get all child elements and extract from them
+      const allChildren = input.querySelectorAll('*');
+      allChildren.forEach(child => {
+        const childText = child.textContent || child.innerText || '';
+        const childHtml = child.innerHTML || '';
+        extractEmailsFromText(childText).forEach(e => {
+          if (isValidEmail(e) && !allFoundEmails.has(e)) {
+            fieldEmails.add(e);
+          }
+        });
+        extractEmailsFromText(childHtml).forEach(e => {
+          if (isValidEmail(e) && !allFoundEmails.has(e)) {
+            fieldEmails.add(e);
+          }
         });
       });
-      
-      if (fieldEmails.size > 0) {
-        recipients[field].push(...Array.from(fieldEmails));
-        fieldEmails.forEach(e => allFoundEmails.add(e));
-        console.log(`[MailTracker AI] Method 4: Extracted ${fieldEmails.size} ${field} recipient(s):`, Array.from(fieldEmails));
-      } else {
-        console.log(`[MailTracker AI] Method 4: No ${field} recipients found`);
-      }
+    });
+    
+    if (fieldEmails.size > 0) {
+      fieldEmails.forEach(e => {
+        recipients[field].push(e);
+        allFoundEmails.add(e);
+      });
+      console.log(`[MailTracker AI] Method 4: Extracted ${fieldEmails.size} ${field} recipient(s)`);
     }
   });
 
@@ -534,9 +532,10 @@ const extractRecipients = composeRoot => {
 
   // Method 6: Comprehensive deep search - extract from ALL elements in compose dialog
   // This catches any emails that might be in hidden elements or unusual structures
+  // Only run for CC if not found yet (to avoid performance issues)
   ['to', 'cc', 'bcc'].forEach(field => {
-    // Only do deep search if we haven't found recipients for this field
-    if (recipients[field].length === 0) {
+    // For TO, always try (it was working before). For CC/BCC, only if not found
+    if (field.toLowerCase() === 'to' || recipients[field].length === 0) {
       console.log(`[MailTracker AI] Method 6: Starting deep search for ${field} recipients...`);
       
       // Find the field label/header first
