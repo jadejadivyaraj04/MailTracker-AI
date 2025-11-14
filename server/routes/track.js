@@ -101,10 +101,12 @@ router.post('/register', async (req, res) => {
     ];
     
     const recipientTokens = {};
-    allRecipients.forEach(email => {
-      // Generate a unique token for each recipient (16 bytes = 32 hex chars)
-      recipientTokens[email] = crypto.randomBytes(16).toString('hex');
-    });
+    if (allRecipients.length > 0) {
+      allRecipients.forEach(email => {
+        // Generate a unique token for each recipient (16 bytes = 32 hex chars)
+        recipientTokens[email] = crypto.randomBytes(16).toString('hex');
+      });
+    }
 
     console.log('[MailTracker AI] Registering message:', {
       uid,
@@ -114,28 +116,36 @@ router.post('/register', async (req, res) => {
       userId
     });
 
+    // Build update object - only include recipientTokens if there are recipients
+    const updateData = {
+      uid,
+      userId,
+      subject,
+      recipients: normalizedRecipients,
+      sentAt,
+      metadata
+    };
+    
+    // Only add recipientTokens if we have recipients (avoid empty Map issues)
+    if (Object.keys(recipientTokens).length > 0) {
+      updateData.recipientTokens = recipientTokens;
+    }
+
     await Message.findOneAndUpdate(
       { uid },
-      {
-        uid,
-        userId,
-        subject,
-        recipients: normalizedRecipients,
-        recipientTokens,
-        sentAt,
-        metadata
-      },
+      updateData,
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     // Return tokens so content script can use them for pixel URLs
     return res.json({ 
       ok: true, 
-      recipientTokens // Map of email -> token
+      recipientTokens: Object.keys(recipientTokens).length > 0 ? recipientTokens : null
     });
   } catch (error) {
     console.error('[MailTracker AI] register error', error);
-    return res.status(500).json({ error: 'Failed to save message metadata' });
+    console.error('[MailTracker AI] register error stack', error.stack);
+    return res.status(500).json({ error: 'Failed to save message metadata', details: error.message });
   }
 });
 
@@ -166,15 +176,16 @@ router.get('/pixel', async (req, res) => {
           // Method 1: If token is provided, look up recipient from token
           if (token && message.recipientTokens) {
             // Find recipient email that matches this token
-            const recipientTokens = message.recipientTokens.toObject ? 
-              message.recipientTokens.toObject() : 
-              message.recipientTokens;
+            // recipientTokens is stored as Mixed type (plain object)
+            const recipientTokens = message.recipientTokens;
             
-            for (const [email, storedToken] of Object.entries(recipientTokens)) {
-              if (storedToken === token) {
-                recipientEmail = email.toLowerCase().trim();
-                console.log('[MailTracker AI] Pixel loaded - Recipient identified from token:', recipientEmail);
-                break;
+            if (recipientTokens && typeof recipientTokens === 'object') {
+              for (const [email, storedToken] of Object.entries(recipientTokens)) {
+                if (storedToken === token) {
+                  recipientEmail = email.toLowerCase().trim();
+                  console.log('[MailTracker AI] Pixel loaded - Recipient identified from token:', recipientEmail);
+                  break;
+                }
               }
             }
             

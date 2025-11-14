@@ -15,7 +15,7 @@ const messageSchema = new mongoose.Schema(
     userId: { type: String, default: 'default' },
     subject: { type: String, default: '' },
     recipients: { type: recipientSchema, default: () => ({}) },
-    recipientTokens: { type: mongoose.Schema.Types.Map, of: String, default: () => ({}) }, // Maps recipient email -> unique token
+    recipientTokens: { type: mongoose.Schema.Types.Mixed, default: () => ({}) }, // Maps recipient email -> unique token
     sentAt: { type: Date, default: Date.now },
     metadata: { type: mongoose.Schema.Types.Mixed }
   },
