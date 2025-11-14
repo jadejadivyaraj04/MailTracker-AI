@@ -145,6 +145,120 @@ const extractRecipients = composeRoot => {
     });
   });
 
+  // Method 2.5: Direct extraction from all textbox elements by position and aria-label
+  // This is more reliable for CC which might be in different states
+  const allTextboxes = composeRoot.querySelectorAll('div[role="textbox"], div[contenteditable="true"]');
+  console.log(`[MailTracker AI] Found ${allTextboxes.length} textbox/contenteditable elements`);
+  
+  allTextboxes.forEach((textbox, index) => {
+    const ariaLabel = (textbox.getAttribute('aria-label') || '').toLowerCase();
+    const textContent = (textbox.textContent || '').trim();
+    
+    // Determine field type
+    let fieldType = null;
+    
+    if (ariaLabel.includes('to') && !ariaLabel.includes('cc') && !ariaLabel.includes('bcc')) {
+      fieldType = 'to';
+    } else if (ariaLabel.includes('cc') && !ariaLabel.includes('bcc')) {
+      fieldType = 'cc';
+    } else if (ariaLabel.includes('bcc')) {
+      fieldType = 'bcc';
+    } else {
+      // Position-based fallback: first is TO, second is CC, third is BCC
+      if (index === 0) fieldType = 'to';
+      else if (index === 1) fieldType = 'cc';
+      else if (index === 2) fieldType = 'bcc';
+    }
+    
+    if (fieldType) {
+      console.log(`[MailTracker AI] Textbox ${index + 1} identified as ${fieldType}, aria-label: "${ariaLabel}"`);
+      
+      // Extract from chip data attributes (most reliable)
+      // Use comprehensive selectors to find all possible chip elements
+      const chips = textbox.querySelectorAll(`
+        [data-email], 
+        [email], 
+        [data-value], 
+        [data-address],
+        [data-address-value],
+        [data-object-id],
+        [data-hovercard-id],
+        [role="option"],
+        [role="listbox"] > *,
+        .chip,
+        [class*="chip"],
+        [class*="Chip"],
+        [class*="token"],
+        [class*="Token"],
+        span[data-email],
+        div[data-email],
+        span[email],
+        div[email]
+      `.replace(/\s+/g, ' ').trim());
+      console.log(`[MailTracker AI] Found ${chips.length} chips in ${fieldType} textbox`);
+      
+      chips.forEach((chip, chipIndex) => {
+        // Check all possible data attributes
+        const possibleEmails = [
+          chip.getAttribute('data-email'),
+          chip.getAttribute('email'),
+          chip.getAttribute('data-value'),
+          chip.getAttribute('data-address'),
+          chip.getAttribute('data-address-value'),
+          chip.getAttribute('data-object-id'), // Gmail sometimes uses this
+          chip.getAttribute('data-hovercard-id'), // Gmail hovercard
+          chip.getAttribute('title'),
+          chip.getAttribute('aria-label')
+        ].filter(Boolean);
+        
+        possibleEmails.forEach(attrValue => {
+          if (attrValue && attrValue.includes('@')) {
+            // Handle "Name <email>" format
+            const extracted = extractEmailFromFormat(attrValue) || attrValue.toLowerCase().trim();
+            if (isValidEmail(extracted) && !allFoundEmails.has(extracted)) {
+              recipients[fieldType].push(extracted);
+              allFoundEmails.add(extracted);
+              console.log(`[MailTracker AI] Method 2.5: Extracted ${fieldType} email from chip ${chipIndex + 1} attribute: ${extracted}`);
+            }
+          }
+        });
+        
+        // Also check text content of chip (might be just the email)
+        const chipText = (chip.textContent || chip.innerText || '').trim();
+        if (chipText && chipText.includes('@')) {
+          // Extract email from text (handles "Name <email>" format)
+          const extracted = extractEmailFromFormat(chipText) || chipText.toLowerCase().trim();
+          if (isValidEmail(extracted) && !allFoundEmails.has(extracted)) {
+            recipients[fieldType].push(extracted);
+            allFoundEmails.add(extracted);
+            console.log(`[MailTracker AI] Method 2.5: Extracted ${fieldType} email from chip ${chipIndex + 1} text: ${extracted}`);
+          }
+        }
+      });
+      
+      // If no chips found but textbox has text, try extracting (but be careful)
+      if (chips.length === 0 && textContent && textContent.includes('@')) {
+        // Only extract if text looks like a single clean email
+        const textEmails = extractEmailsFromText(textContent);
+        textEmails.forEach(email => {
+          if (isValidEmail(email) && !allFoundEmails.has(email)) {
+            // Additional check: email should be the main content, not mixed with other text
+            const emailIndex = textContent.toLowerCase().indexOf(email);
+            const beforeEmail = textContent.substring(0, emailIndex).trim();
+            const afterEmail = textContent.substring(emailIndex + email.length).trim();
+            
+            // Only accept if email is isolated or has minimal surrounding text
+            if (beforeEmail.length < 50 && afterEmail.length < 50) {
+              recipients[fieldType].push(email);
+              allFoundEmails.add(email);
+              console.log(`[MailTracker AI] Method 2.5: Extracted ${fieldType} email from text: ${email}`);
+            }
+          }
+        });
+      }
+    }
+  });
+
   // Method 3: Comprehensive chip extraction for each field
   const extractFromChips = (fieldName) => {
     const emails = new Set();
@@ -417,15 +531,54 @@ const extractRecipients = composeRoot => {
         // ONLY extract from chip elements with data attributes, NOT from raw text
         const ccEmails = new Set();
         
-        // Priority: data attributes from chips
-        const chips = ccContainer.querySelectorAll('[data-email], [email], [data-value], [data-address]');
+        // Priority: data attributes from chips - use comprehensive selectors
+        const chips = ccContainer.querySelectorAll(`
+          [data-email], 
+          [email], 
+          [data-value], 
+          [data-address],
+          [data-address-value],
+          [data-object-id],
+          [data-hovercard-id],
+          [role="option"],
+          [role="listbox"] > *,
+          .chip,
+          [class*="chip"],
+          [class*="Chip"],
+          [class*="token"],
+          [class*="Token"]
+        `.replace(/\s+/g, ' ').trim());
+        
         chips.forEach(chip => {
-          const dataEmail = chip.getAttribute('data-email') || 
-                           chip.getAttribute('email') || 
-                           chip.getAttribute('data-value') || 
-                           chip.getAttribute('data-address');
-          if (dataEmail && isValidEmail(dataEmail.toLowerCase().trim())) {
-            ccEmails.add(dataEmail.toLowerCase().trim());
+          // Check all possible attributes
+          const possibleEmails = [
+            chip.getAttribute('data-email'),
+            chip.getAttribute('email'),
+            chip.getAttribute('data-value'),
+            chip.getAttribute('data-address'),
+            chip.getAttribute('data-address-value'),
+            chip.getAttribute('data-object-id'),
+            chip.getAttribute('data-hovercard-id'),
+            chip.getAttribute('title'),
+            chip.getAttribute('aria-label')
+          ].filter(Boolean);
+          
+          possibleEmails.forEach(attrValue => {
+            if (attrValue && attrValue.includes('@')) {
+              const extracted = extractEmailFromFormat(attrValue) || attrValue.toLowerCase().trim();
+              if (isValidEmail(extracted)) {
+                ccEmails.add(extracted);
+              }
+            }
+          });
+          
+          // Also check chip text content
+          const chipText = (chip.textContent || chip.innerText || '').trim();
+          if (chipText && chipText.includes('@')) {
+            const extracted = extractEmailFromFormat(chipText) || chipText.toLowerCase().trim();
+            if (isValidEmail(extracted)) {
+              ccEmails.add(extracted);
+            }
           }
         });
         
