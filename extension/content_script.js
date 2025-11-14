@@ -221,27 +221,51 @@ const extractRecipients = composeRoot => {
 
   // Clean up and normalize emails
   Object.keys(recipients).forEach(key => {
-    if (!recipients[key].length) {
+    if (!recipients[key] || !Array.isArray(recipients[key]) || !recipients[key].length) {
       delete recipients[key];
     } else {
       // Normalize emails: lowercase, trim, remove display names, validate
+      const originalCount = recipients[key].length;
       recipients[key] = recipients[key]
         .map(email => {
-          if (!email || typeof email !== 'string') return null;
+          if (!email || typeof email !== 'string') {
+            console.log('[MailTracker AI] Skipping non-string email:', email);
+            return null;
+          }
           
           // Extract email from "Name <email>" format if present
           const emailMatch = email.match(/<([^>]+)>/) || email.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
           const cleanEmail = emailMatch ? (emailMatch[1] || emailMatch[0]) : email;
           const normalized = cleanEmail.trim().toLowerCase();
           
-          // Validate it's a proper email format
-          if (/^[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/.test(normalized)) {
-            return normalized;
+          // More lenient email validation - just check for basic email pattern
+          // Allow most common email formats
+          if (normalized && normalized.includes('@') && normalized.includes('.') && normalized.length > 5) {
+            // Basic validation: has @, has ., reasonable length
+            // Split and check parts
+            const parts = normalized.split('@');
+            if (parts.length === 2 && parts[0].length > 0 && parts[1].length > 0 && parts[1].includes('.')) {
+              return normalized;
+            }
           }
+          
+          console.log('[MailTracker AI] Email validation failed for:', email, '-> normalized:', normalized);
           return null;
         })
         .filter(Boolean)
         .filter((email, index, array) => array.indexOf(email) === index); // Remove duplicates
+      
+      // Log if emails were filtered out
+      if (recipients[key].length === 0 && originalCount > 0) {
+        console.warn(`[MailTracker AI] All ${originalCount} emails in ${key} were filtered out during validation`);
+      } else if (recipients[key].length < originalCount) {
+        console.log(`[MailTracker AI] Filtered ${originalCount - recipients[key].length} invalid emails from ${key}`);
+      }
+      
+      // Delete if empty after filtering
+      if (recipients[key].length === 0) {
+        delete recipients[key];
+      }
     }
   });
 
