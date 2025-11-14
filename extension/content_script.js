@@ -306,7 +306,7 @@ const extractRecipients = composeRoot => {
       const text = (el.textContent || '').toLowerCase();
       const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
       const title = (el.getAttribute('title') || '').toLowerCase();
-      const className = (el.className || '').toLowerCase();
+      const className = String(el.className || '').toLowerCase();
       
       return (text === 'cc' || text === 'cc:' || 
               text.startsWith('cc ') || text.startsWith('cc:') ||
@@ -553,7 +553,7 @@ const extractRecipients = composeRoot => {
           const text = (el.textContent?.trim() || '').toLowerCase();
           const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
           const title = (el.getAttribute('title') || '').toLowerCase();
-          const className = (el.className || '').toLowerCase();
+          const className = String(el.className || '').toLowerCase();
           const labelLower = label.toLowerCase();
           
           // For CC, be more lenient
