@@ -60,7 +60,12 @@ const extractRecipients = composeRoot => {
   if (toInput && toInput.value) {
     const emails = toInput.value
       .split(',')
-      .map(item => item.trim().replace(/<.*?>/, '').trim()) // Remove name tags like "Name <email>"
+      .map(item => {
+        // Extract email from "Name <email>" format or just email
+        const emailMatch = item.match(/<([^>]+)>/) || item.match(/([\w\.-]+@[\w\.-]+\.\w+)/);
+        return emailMatch ? emailMatch[1] || emailMatch[0] : item.trim();
+      })
+      .map(email => email.trim())
       .filter(Boolean);
     if (emails.length && !recipients.to.length) {
       recipients.to = emails;
@@ -69,15 +74,35 @@ const extractRecipients = composeRoot => {
 
   // Method 3: Extract from chips/tokens (Gmail's chip-based UI)
   const extractFromChips = (labelText) => {
-    const chips = composeRoot.querySelectorAll(`span[aria-label*="${labelText}"], div[aria-label*="${labelText}"]`);
     const emails = [];
-    chips.forEach(chip => {
-      const emailMatch = chip.textContent.match(/[\w\.-]+@[\w\.-]+\.\w+/);
-      if (emailMatch) {
-        emails.push(emailMatch[0]);
-      }
+    // Try multiple selectors for Gmail's chip UI
+    const chipSelectors = [
+      `div[aria-label*="${labelText}"] span[email]`,
+      `div[aria-label*="${labelText}"] [data-email]`,
+      `span[aria-label*="${labelText}"]`,
+      `div[aria-label*="${labelText}"]`
+    ];
+    
+    chipSelectors.forEach(selector => {
+      const chips = composeRoot.querySelectorAll(selector);
+      chips.forEach(chip => {
+        // Try data-email attribute first
+        const dataEmail = chip.getAttribute('data-email') || chip.getAttribute('email');
+        if (dataEmail) {
+          emails.push(dataEmail);
+          return;
+        }
+        
+        // Extract from text content with improved regex
+        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
+        const matches = chip.textContent.match(emailRegex);
+        if (matches) {
+          emails.push(...matches);
+        }
+      });
     });
-    return emails;
+    
+    return [...new Set(emails)]; // Remove duplicates
   };
 
   // Try to extract from visible chips
@@ -100,21 +125,47 @@ const extractRecipients = composeRoot => {
   const composeHeader = composeRoot.querySelector('[role="dialog"] > div, .aHl');
   if (composeHeader && (!recipients.to.length || !recipients.cc.length || !recipients.bcc.length)) {
     const allText = composeHeader.textContent || '';
-    const emailRegex = /[\w\.-]+@[\w\.-]+\.\w+/g;
-    const foundEmails = allText.match(emailRegex) || [];
+    const allHtml = composeHeader.innerHTML || '';
+    // Improved email regex to handle all valid email formats
+    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
+    const foundEmails = [...(allText.match(emailRegex) || []), ...(allHtml.match(emailRegex) || [])];
     
     // If we found emails but couldn't categorize them, put them in "to"
     if (foundEmails.length && !recipients.to.length && !recipients.cc.length && !recipients.bcc.length) {
       recipients.to = [...new Set(foundEmails)]; // Remove duplicates
     }
   }
+  
+  // Method 5: Try to extract from Gmail's recipient input chips directly
+  const recipientChips = composeRoot.querySelectorAll('[data-email], [email], [role="textbox"][aria-label*="To"]');
+  if (recipientChips.length && !recipients.to.length) {
+    const chipEmails = [];
+    recipientChips.forEach(chip => {
+      const email = chip.getAttribute('data-email') || chip.getAttribute('email') || chip.textContent.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/)?.[1];
+      if (email) chipEmails.push(email);
+    });
+    if (chipEmails.length) {
+      recipients.to = [...new Set(chipEmails)];
+    }
+  }
 
-  // Clean up empty arrays
+  // Clean up and normalize emails
   Object.keys(recipients).forEach(key => {
     if (!recipients[key].length) {
       delete recipients[key];
+    } else {
+      // Normalize emails: lowercase, trim, remove display names
+      recipients[key] = recipients[key].map(email => {
+        // Extract email from "Name <email>" format
+        const emailMatch = email.match(/<([^>]+)>/) || email.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
+        const cleanEmail = emailMatch ? (emailMatch[1] || emailMatch[0]) : email;
+        return cleanEmail.trim().toLowerCase();
+      }).filter(Boolean);
     }
   });
+
+  // Debug logging
+  console.log('[MailTracker AI] Extracted recipients (normalized):', recipients);
 
   return recipients;
 };

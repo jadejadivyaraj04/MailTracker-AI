@@ -30,17 +30,31 @@ router.post('/register', async (req, res) => {
 
     const sentAt = timestamp ? new Date(timestamp) : new Date();
 
+    // Normalize all recipient emails (lowercase, trim)
+    const normalizeEmailArray = (arr) => (arr || []).map(email => 
+      (email || '').toLowerCase().trim()
+    ).filter(Boolean);
+
+    const normalizedRecipients = {
+      to: normalizeEmailArray(recipients.to),
+      cc: normalizeEmailArray(recipients.cc),
+      bcc: normalizeEmailArray(recipients.bcc)
+    };
+
+    console.log('[MailTracker AI] Registering message:', {
+      uid,
+      subject,
+      recipients: normalizedRecipients,
+      userId
+    });
+
     await Message.findOneAndUpdate(
       { uid },
       {
         uid,
         userId,
         subject,
-        recipients: {
-          to: recipients.to || [],
-          cc: recipients.cc || [],
-          bcc: recipients.bcc || []
-        },
+        recipients: normalizedRecipients,
         sentAt,
         metadata
       },
