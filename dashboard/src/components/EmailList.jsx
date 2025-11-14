@@ -45,7 +45,6 @@ function EmailList({ messages = [] }) {
         ].filter(Boolean);
 
         const recipientStatus = message.recipientStatus || [];
-        const isSingleRecipient = allRecipients.length === 1;
         const toRecipients = message.recipients?.to || [];
         const ccRecipients = message.recipients?.cc || [];
         const bccRecipients = message.recipients?.bcc || [];
@@ -120,17 +119,17 @@ function EmailList({ messages = [] }) {
               )}
             </div>
 
-            {/* Read By Section - Only show for single recipient emails */}
-            {isSingleRecipient && allRecipients.length > 0 ? (
+            {/* Read By Section - Show individual recipient status for all emails */}
+            {allRecipients.length > 0 ? (
               <div>
                 <div className="flex items-start gap-2 mb-3">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Read By:</span>
-                  <div className="flex-1">
+                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Read Status:</span>
+                  <div className="flex-1 flex flex-wrap gap-2">
                     {recipientStatus.length > 0 ? (
                       recipientStatus.map((status, idx) => (
                         <div
                           key={idx}
-                          className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium mb-2 ${
+                          className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${
                             status.read
                               ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                               : 'bg-slate-50 text-slate-600 border border-slate-200'
@@ -159,37 +158,13 @@ function EmailList({ messages = [] }) {
                       allRecipients.map((email, idx) => (
                         <div
                           key={idx}
-                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium mb-2 bg-slate-50 text-slate-600 border border-slate-200"
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-50 text-slate-600 border border-slate-200"
                         >
                           <span className="w-2 h-2 rounded-full bg-slate-400" />
                           <span className="font-semibold">{email}</span>
                           <span className="text-xs text-slate-500">○ Not read</span>
                         </div>
                       ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : allRecipients.length > 0 ? (
-              <div>
-                <div className="flex items-start gap-2">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Read Status:</span>
-                  <div className="flex-1">
-                    {message.openCount > 0 ? (
-                      <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-amber-50 text-amber-800 border border-amber-200">
-                        <span className="w-2 h-2 rounded-full bg-amber-500" />
-                        <span className="font-medium">At least one recipient opened</span>
-                        {message.lastOpenedAt && (
-                          <span className="text-xs opacity-75 ml-1">
-                            ({formatTimeAgo(message.lastOpenedAt)})
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-slate-50 text-slate-600 border border-slate-200">
-                        <span className="w-2 h-2 rounded-full bg-slate-400" />
-                        <span className="font-medium">Not opened yet</span>
-                      </div>
                     )}
                   </div>
                 </div>

@@ -93,10 +93,24 @@ router.post('/register', async (req, res) => {
       bcc: normalizeEmailArray(recipients.bcc)
     };
 
+    // Generate unique token for each recipient
+    const allRecipients = [
+      ...normalizedRecipients.to,
+      ...normalizedRecipients.cc,
+      ...normalizedRecipients.bcc
+    ];
+    
+    const recipientTokens = {};
+    allRecipients.forEach(email => {
+      // Generate a unique token for each recipient (16 bytes = 32 hex chars)
+      recipientTokens[email] = crypto.randomBytes(16).toString('hex');
+    });
+
     console.log('[MailTracker AI] Registering message:', {
       uid,
       subject,
       recipients: normalizedRecipients,
+      recipientCount: allRecipients.length,
       userId
     });
 
@@ -107,13 +121,18 @@ router.post('/register', async (req, res) => {
         userId,
         subject,
         recipients: normalizedRecipients,
+        recipientTokens,
         sentAt,
         metadata
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    return res.json({ ok: true });
+    // Return tokens so content script can use them for pixel URLs
+    return res.json({ 
+      ok: true, 
+      recipientTokens // Map of email -> token
+    });
   } catch (error) {
     console.error('[MailTracker AI] register error', error);
     return res.status(500).json({ error: 'Failed to save message metadata' });
@@ -121,7 +140,7 @@ router.post('/register', async (req, res) => {
 });
 
 router.get('/pixel', async (req, res) => {
-  const { uid } = req.query;
+  const { uid, token } = req.query;
 
   if (!uid) {
     return res.status(400).end();
@@ -143,22 +162,44 @@ router.get('/pixel', async (req, res) => {
         // Validate if this is a legitimate open (not a bot/preview)
         isValid = isValidOpen(message, userAgent);
         
-        if (isValid && message?.recipients) {
-          const allRecipients = [
-            ...(message.recipients.to || []),
-            ...(message.recipients.cc || []),
-            ...(message.recipients.bcc || [])
-          ].filter(Boolean);
+        if (isValid) {
+          // Method 1: If token is provided, look up recipient from token
+          if (token && message.recipientTokens) {
+            // Find recipient email that matches this token
+            const recipientTokens = message.recipientTokens.toObject ? 
+              message.recipientTokens.toObject() : 
+              message.recipientTokens;
+            
+            for (const [email, storedToken] of Object.entries(recipientTokens)) {
+              if (storedToken === token) {
+                recipientEmail = email.toLowerCase().trim();
+                console.log('[MailTracker AI] Pixel loaded - Recipient identified from token:', recipientEmail);
+                break;
+              }
+            }
+            
+            if (!recipientEmail) {
+              console.log('[MailTracker AI] Pixel loaded - Token provided but not found in recipientTokens');
+            }
+          }
           
-          // Only track recipient if there's exactly one (we can't distinguish multiple)
-          // Normalize email (lowercase, trim) for consistent matching
-          if (allRecipients.length === 1) {
-            recipientEmail = allRecipients[0].toLowerCase().trim();
-            console.log('[MailTracker AI] Pixel loaded - Single recipient detected:', recipientEmail);
-          } else if (allRecipients.length > 1) {
-            console.log('[MailTracker AI] Pixel loaded - Multiple recipients, cannot track individual opens:', allRecipients.length);
-          } else {
-            console.log('[MailTracker AI] Pixel loaded - No recipients found in message');
+          // Method 2: Fallback to single recipient detection (for backward compatibility)
+          if (!recipientEmail && message?.recipients) {
+            const allRecipients = [
+              ...(message.recipients.to || []),
+              ...(message.recipients.cc || []),
+              ...(message.recipients.bcc || [])
+            ].filter(Boolean);
+            
+            // Only track recipient if there's exactly one (we can't distinguish multiple without token)
+            if (allRecipients.length === 1) {
+              recipientEmail = allRecipients[0].toLowerCase().trim();
+              console.log('[MailTracker AI] Pixel loaded - Single recipient detected (fallback):', recipientEmail);
+            } else if (allRecipients.length > 1 && !token) {
+              console.log('[MailTracker AI] Pixel loaded - Multiple recipients, no token provided, cannot track individual opens:', allRecipients.length);
+            } else if (allRecipients.length === 0) {
+              console.log('[MailTracker AI] Pixel loaded - No recipients found in message');
+            }
           }
         }
       }
@@ -169,19 +210,59 @@ router.get('/pixel', async (req, res) => {
 
     // Only create OpenEvent if it's a valid open (not a bot/preview)
     if (isValid) {
-      await OpenEvent.create({
+      const ipHashValue = hashIp(ip, userAgent);
+      
+      // Deduplication: Check if there's already an open event from the same IP/user agent
+      // within the last 5 seconds (to handle multiple pixels loading simultaneously)
+      const fiveSecondsAgo = new Date(Date.now() - 5000);
+      const existingOpen = await OpenEvent.findOne({
         messageUid: uid,
-        recipientEmail, // Will be null if multiple recipients or lookup failed
-        ipHash: hashIp(ip, userAgent),
-        userAgent
+        ipHash: ipHashValue,
+        createdAt: { $gte: fiveSecondsAgo }
       });
       
-      console.log('[MailTracker AI] OpenEvent created (valid):', { 
-        messageUid: uid, 
-        recipientEmail, 
-        hasRecipientEmail: !!recipientEmail,
-        userAgent: userAgent.substring(0, 50) // Log first 50 chars for debugging
-      });
+      if (existingOpen) {
+        // If we have a recipient email from token, update the existing event
+        // (This handles the case where multiple pixels load, and we want to identify the actual recipient)
+        if (recipientEmail) {
+          // Only update if existing event doesn't have a recipient email, or if it matches
+          // (to avoid overwriting correct recipient with wrong one from different pixel)
+          if (!existingOpen.recipientEmail || existingOpen.recipientEmail === recipientEmail) {
+            existingOpen.recipientEmail = recipientEmail;
+            await existingOpen.save();
+            console.log('[MailTracker AI] OpenEvent updated with recipient email:', { 
+              messageUid: uid, 
+              recipientEmail 
+            });
+          } else {
+            console.log('[MailTracker AI] OpenEvent skipped (different recipient already set):', { 
+              messageUid: uid, 
+              recipientEmail,
+              existingRecipient: existingOpen.recipientEmail
+            });
+          }
+        } else {
+          console.log('[MailTracker AI] OpenEvent skipped (duplicate within 5s, no recipient identified):', { 
+            messageUid: uid,
+            existingRecipient: existingOpen.recipientEmail
+          });
+        }
+      } else {
+        // Create new open event
+        await OpenEvent.create({
+          messageUid: uid,
+          recipientEmail, // Will be null if multiple recipients or lookup failed
+          ipHash: ipHashValue,
+          userAgent
+        });
+        
+        console.log('[MailTracker AI] OpenEvent created (valid):', { 
+          messageUid: uid, 
+          recipientEmail, 
+          hasRecipientEmail: !!recipientEmail,
+          userAgent: userAgent.substring(0, 50) // Log first 50 chars for debugging
+        });
+      }
     } else {
       // Log filtered opens for debugging
       const reason = !message ? 'message not found' : 

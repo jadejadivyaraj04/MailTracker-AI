@@ -171,24 +171,52 @@ const extractRecipients = composeRoot => {
 };
 
 /**
- * Append tracking pixel image to the end of the compose body
+ * Append tracking pixel images to the end of the compose body
+ * For multiple recipients, generates one pixel per recipient with unique token
  */
-const appendTrackingPixel = (bodyEl, uid) => {
+const appendTrackingPixel = (bodyEl, uid, recipientTokens = null) => {
   if (!bodyEl) return;
-  const pixelUrl = `${MAILTRACKER_BACKEND_BASE}/pixel?uid=${encodeURIComponent(uid)}`;
+  
+  // If we have recipient tokens, generate one pixel per recipient
+  if (recipientTokens && Object.keys(recipientTokens).length > 0) {
+    Object.entries(recipientTokens).forEach(([email, token]) => {
+      const pixelUrl = `${MAILTRACKER_BACKEND_BASE}/pixel?uid=${encodeURIComponent(uid)}&token=${encodeURIComponent(token)}`;
+      
+      // Check if this specific pixel URL is already in the body
+      if (bodyEl.innerHTML.includes(pixelUrl)) {
+        return; // already appended
+      }
 
-  if (bodyEl.innerHTML.includes(pixelUrl)) {
-    return; // already appended for this UID
+      const pixelImg = document.createElement('img');
+      pixelImg.src = pixelUrl;
+      pixelImg.width = 1;
+      pixelImg.height = 1;
+      pixelImg.style.display = 'none';
+      pixelImg.alt = '';
+      pixelImg.setAttribute('data-recipient', email); // For debugging
+
+      bodyEl.appendChild(pixelImg);
+    });
+    
+    console.log('[MailTracker AI] Added tracking pixels for', Object.keys(recipientTokens).length, 'recipients');
+  } else {
+    // Fallback: single pixel without token (for backward compatibility)
+    const pixelUrl = `${MAILTRACKER_BACKEND_BASE}/pixel?uid=${encodeURIComponent(uid)}`;
+
+    if (bodyEl.innerHTML.includes(pixelUrl)) {
+      return; // already appended for this UID
+    }
+
+    const pixelImg = document.createElement('img');
+    pixelImg.src = pixelUrl;
+    pixelImg.width = 1;
+    pixelImg.height = 1;
+    pixelImg.style.display = 'none';
+    pixelImg.alt = '';
+
+    bodyEl.appendChild(pixelImg);
+    console.log('[MailTracker AI] Added single tracking pixel (no recipient tokens)');
   }
-
-  const pixelImg = document.createElement('img');
-  pixelImg.src = pixelUrl;
-  pixelImg.width = 1;
-  pixelImg.height = 1;
-  pixelImg.style.display = 'none';
-  pixelImg.alt = '';
-
-  bodyEl.appendChild(pixelImg);
 };
 
 /**
@@ -246,6 +274,7 @@ const rewriteLinks = (bodyEl, uid) => {
 
 /**
  * Send metadata about the outgoing email to the backend
+ * Returns recipientTokens if available
  */
 const registerMessage = async ({ uid, recipients, subject }) => {
   // Debug logging
@@ -283,16 +312,20 @@ const registerMessage = async ({ uid, recipients, subject }) => {
         message: 'Tracking enabled for your outgoing email.'
       }
     });
+
+    // Return recipientTokens if available
+    return result.recipientTokens || null;
   } catch (error) {
     console.error('[MailTracker AI] Register error:', error);
     console.error('[MailTracker AI] Failed to register:', { uid, recipients, subject });
+    return null;
   }
 };
 
 /**
  * Handle click on Gmail send buttons and wire up tracking
  */
-const handleSendClick = event => {
+const handleSendClick = async event => {
   if (!trackingEnabled) {
     return; // user disabled tracking via popup toggle
   }
@@ -312,9 +345,6 @@ const handleSendClick = event => {
   }
 
   const uid = generateUUID();
-  appendTrackingPixel(bodyEl, uid);
-  rewriteLinks(bodyEl, uid);
-
   const recipients = extractRecipients(composeRoot);
   const subject = subjectInput ? subjectInput.value : '';
 
@@ -322,7 +352,13 @@ const handleSendClick = event => {
   console.log('[MailTracker AI] Extracted recipients:', recipients);
   console.log('[MailTracker AI] Extracted subject:', subject);
 
-  registerMessage({ uid, recipients, subject });
+  // Register message first to get recipient tokens
+  // Use a short timeout to allow registration to complete before send
+  const recipientTokens = await registerMessage({ uid, recipients, subject });
+  
+  // Add tracking pixels with recipient tokens (if available)
+  appendTrackingPixel(bodyEl, uid, recipientTokens);
+  rewriteLinks(bodyEl, uid);
 };
 
 /**
