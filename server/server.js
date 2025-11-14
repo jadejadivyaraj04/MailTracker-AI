@@ -13,8 +13,11 @@ const PORT = process.env.PORT || 5000;
 
 app.set('trust proxy', 1);
 
-// Security middleware
-app.use(helmet());
+// Security middleware - configure Helmet to allow cross-origin images for tracking pixels
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}));
 
 // ✅ OPTION 2 — Allow ANY origin (fixes curl + browser CORS errors)
 app.use(

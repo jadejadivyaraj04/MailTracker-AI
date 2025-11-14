@@ -294,10 +294,15 @@ router.get('/pixel', async (req, res) => {
 
   // Always return the pixel image, even if we filtered the event
   // This prevents broken images in emails
+  // Set CORS headers to allow cross-origin image loading
   res.setHeader('Content-Type', 'image/gif');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   return res.end(PIXEL_BUFFER);
 });
 

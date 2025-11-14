@@ -386,17 +386,34 @@ const registerMessage = async ({ uid, recipients, subject }) => {
     const result = await response.json();
     console.log('[MailTracker AI] Message registered successfully:', result);
 
-    chrome.runtime.sendMessage({
-      type: 'mailtracker:notify',
-      payload: {
-        title: 'MailTracker AI',
-        message: 'Tracking enabled for your outgoing email.'
+    // Try to send notification, but handle extension context invalidated gracefully
+    try {
+      chrome.runtime.sendMessage({
+        type: 'mailtracker:notify',
+        payload: {
+          title: 'MailTracker AI',
+          message: 'Tracking enabled for your outgoing email.'
+        }
+      });
+    } catch (runtimeError) {
+      // Extension context might be invalidated (extension reloaded)
+      // This is not critical, just log it
+      if (runtimeError.message && runtimeError.message.includes('Extension context invalidated')) {
+        console.log('[MailTracker AI] Extension context invalidated (extension may have reloaded)');
+      } else {
+        console.warn('[MailTracker AI] Failed to send notification:', runtimeError);
       }
-    });
+    }
 
     // Return recipientTokens if available
     return result.recipientTokens || null;
   } catch (error) {
+    // Handle extension context invalidated error gracefully
+    if (error.message && error.message.includes('Extension context invalidated')) {
+      console.log('[MailTracker AI] Extension context invalidated - extension may have reloaded. Tracking pixel will still work.');
+      // Return null so we still add the pixel (it will work even without registration)
+      return null;
+    }
     console.error('[MailTracker AI] Register error:', error);
     console.error('[MailTracker AI] Failed to register:', { uid, recipients, subject });
     return null;
