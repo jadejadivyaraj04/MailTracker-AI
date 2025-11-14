@@ -8,6 +8,28 @@ const router = express.Router();
 
 const PIXEL_BUFFER = Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64');
 
+// Minimum time (in milliseconds) after sending before we count an open as valid
+// This filters out email preview services that load images immediately
+const MIN_OPEN_DELAY_MS = 3000; // 3 seconds
+
+// Known bot/preview user agents that should be filtered out
+const BOT_USER_AGENTS = [
+  'googlebot',
+  'bingbot',
+  'slurp',
+  'duckduckbot',
+  'baiduspider',
+  'yandexbot',
+  'sogou',
+  'exabot',
+  'facebot',
+  'ia_archiver',
+  'preview',
+  'crawler',
+  'spider',
+  'bot'
+];
+
 const hashIp = (ip, userAgent = '') => {
   return crypto.createHash('sha256').update(`${ip}|${userAgent}`).digest('hex');
 };
@@ -18,6 +40,36 @@ const getClientIp = req => {
     return forwarded.split(',')[0].trim();
   }
   return req.socket?.remoteAddress || '0.0.0.0';
+};
+
+/**
+ * Check if user agent is likely a bot or preview service
+ */
+const isBotOrPreview = (userAgent) => {
+  if (!userAgent) return true; // No user agent = likely bot
+  const ua = userAgent.toLowerCase();
+  return BOT_USER_AGENTS.some(bot => ua.includes(bot));
+};
+
+/**
+ * Check if open event should be considered valid
+ * Filters out previews and bots
+ */
+const isValidOpen = (message, userAgent) => {
+  // Filter out bots
+  if (isBotOrPreview(userAgent)) {
+    return false;
+  }
+
+  // Check if enough time has passed since sending (filters out previews)
+  if (message?.sentAt) {
+    const timeSinceSent = Date.now() - new Date(message.sentAt).getTime();
+    if (timeSinceSent < MIN_OPEN_DELAY_MS) {
+      return false; // Too soon after sending = likely preview
+    }
+  }
+
+  return true;
 };
 
 router.post('/register', async (req, res) => {
@@ -79,26 +131,35 @@ router.get('/pixel', async (req, res) => {
     const ip = getClientIp(req);
     const userAgent = req.headers['user-agent'] || '';
 
-    // Look up message to determine recipient (for single-recipient emails)
+    // Look up message to validate and determine recipient
+    let message = null;
     let recipientEmail = null;
+    let isValid = false;
+
     try {
-      const message = await Message.findOne({ uid });
-      if (message?.recipients) {
-        const allRecipients = [
-          ...(message.recipients.to || []),
-          ...(message.recipients.cc || []),
-          ...(message.recipients.bcc || [])
-        ].filter(Boolean);
+      message = await Message.findOne({ uid });
+      
+      if (message) {
+        // Validate if this is a legitimate open (not a bot/preview)
+        isValid = isValidOpen(message, userAgent);
         
-        // Only track recipient if there's exactly one (we can't distinguish multiple)
-        // Normalize email (lowercase, trim) for consistent matching
-        if (allRecipients.length === 1) {
-          recipientEmail = allRecipients[0].toLowerCase().trim();
-          console.log('[MailTracker AI] Pixel loaded - Single recipient detected:', recipientEmail);
-        } else if (allRecipients.length > 1) {
-          console.log('[MailTracker AI] Pixel loaded - Multiple recipients, cannot track individual opens:', allRecipients.length);
-        } else {
-          console.log('[MailTracker AI] Pixel loaded - No recipients found in message');
+        if (isValid && message?.recipients) {
+          const allRecipients = [
+            ...(message.recipients.to || []),
+            ...(message.recipients.cc || []),
+            ...(message.recipients.bcc || [])
+          ].filter(Boolean);
+          
+          // Only track recipient if there's exactly one (we can't distinguish multiple)
+          // Normalize email (lowercase, trim) for consistent matching
+          if (allRecipients.length === 1) {
+            recipientEmail = allRecipients[0].toLowerCase().trim();
+            console.log('[MailTracker AI] Pixel loaded - Single recipient detected:', recipientEmail);
+          } else if (allRecipients.length > 1) {
+            console.log('[MailTracker AI] Pixel loaded - Multiple recipients, cannot track individual opens:', allRecipients.length);
+          } else {
+            console.log('[MailTracker AI] Pixel loaded - No recipients found in message');
+          }
         }
       }
     } catch (lookupError) {
@@ -106,18 +167,39 @@ router.get('/pixel', async (req, res) => {
       console.warn('[MailTracker AI] Could not lookup message for recipient tracking', lookupError);
     }
 
-    await OpenEvent.create({
-      messageUid: uid,
-      recipientEmail, // Will be null if multiple recipients or lookup failed
-      ipHash: hashIp(ip, userAgent),
-      userAgent
-    });
-    
-    console.log('[MailTracker AI] OpenEvent created:', { messageUid: uid, recipientEmail, hasRecipientEmail: !!recipientEmail });
+    // Only create OpenEvent if it's a valid open (not a bot/preview)
+    if (isValid) {
+      await OpenEvent.create({
+        messageUid: uid,
+        recipientEmail, // Will be null if multiple recipients or lookup failed
+        ipHash: hashIp(ip, userAgent),
+        userAgent
+      });
+      
+      console.log('[MailTracker AI] OpenEvent created (valid):', { 
+        messageUid: uid, 
+        recipientEmail, 
+        hasRecipientEmail: !!recipientEmail,
+        userAgent: userAgent.substring(0, 50) // Log first 50 chars for debugging
+      });
+    } else {
+      // Log filtered opens for debugging
+      const reason = !message ? 'message not found' : 
+                     isBotOrPreview(userAgent) ? 'bot/preview user agent' : 
+                     'opened too soon after sending (likely preview)';
+      console.log('[MailTracker AI] OpenEvent filtered (invalid):', { 
+        messageUid: uid, 
+        reason,
+        userAgent: userAgent.substring(0, 50),
+        timeSinceSent: message ? Date.now() - new Date(message.sentAt).getTime() : 'N/A'
+      });
+    }
   } catch (error) {
     console.error('[MailTracker AI] pixel logging error', error);
   }
 
+  // Always return the pixel image, even if we filtered the event
+  // This prevents broken images in emails
   res.setHeader('Content-Type', 'image/gif');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
