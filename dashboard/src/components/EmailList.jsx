@@ -120,39 +120,53 @@ function EmailList({ messages = [] }) {
               )}
             </div>
 
-            {/* Read By Section */}
-            {isSingleRecipient && recipientStatus.length > 0 ? (
+            {/* Read By Section - Only show for single recipient emails */}
+            {isSingleRecipient && allRecipients.length > 0 ? (
               <div>
                 <div className="flex items-start gap-2 mb-3">
                   <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide shrink-0">Read By:</span>
                   <div className="flex-1">
-                    {recipientStatus.map((status, idx) => (
-                      <div
-                        key={idx}
-                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium mb-2 ${
-                          status.read
-                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                            : 'bg-slate-50 text-slate-600 border border-slate-200'
-                        }`}
-                      >
-                        <span className={`w-2 h-2 rounded-full ${status.read ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                        <span className="font-semibold">{status.email}</span>
-                        <span className={`text-xs ${status.read ? 'text-emerald-700' : 'text-slate-500'}`}>
-                          {status.read ? (
-                            <>
-                              <span className="font-bold">✓ Read</span>
-                              {status.readAt && (
-                                <span className="ml-1 opacity-75">
-                                  {formatTimeAgo(status.readAt)}
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <span>○ Not read</span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
+                    {recipientStatus.length > 0 ? (
+                      recipientStatus.map((status, idx) => (
+                        <div
+                          key={idx}
+                          className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium mb-2 ${
+                            status.read
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              : 'bg-slate-50 text-slate-600 border border-slate-200'
+                          }`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${status.read ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                          <span className="font-semibold">{status.email}</span>
+                          <span className={`text-xs ${status.read ? 'text-emerald-700' : 'text-slate-500'}`}>
+                            {status.read ? (
+                              <>
+                                <span className="font-bold">✓ Read</span>
+                                {status.readAt && (
+                                  <span className="ml-1 opacity-75">
+                                    {formatTimeAgo(status.readAt)}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span>○ Not read</span>
+                            )}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      // Fallback: show recipient as not read if no status data
+                      allRecipients.map((email, idx) => (
+                        <div
+                          key={idx}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium mb-2 bg-slate-50 text-slate-600 border border-slate-200"
+                        >
+                          <span className="w-2 h-2 rounded-full bg-slate-400" />
+                          <span className="font-semibold">{email}</span>
+                          <span className="text-xs text-slate-500">○ Not read</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>

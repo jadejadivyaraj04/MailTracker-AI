@@ -77,8 +77,14 @@ router.get('/pixel', async (req, res) => {
         ].filter(Boolean);
         
         // Only track recipient if there's exactly one (we can't distinguish multiple)
+        // Normalize email (lowercase, trim) for consistent matching
         if (allRecipients.length === 1) {
-          recipientEmail = allRecipients[0];
+          recipientEmail = allRecipients[0].toLowerCase().trim();
+          console.log('[MailTracker AI] Pixel loaded - Single recipient detected:', recipientEmail);
+        } else if (allRecipients.length > 1) {
+          console.log('[MailTracker AI] Pixel loaded - Multiple recipients, cannot track individual opens:', allRecipients.length);
+        } else {
+          console.log('[MailTracker AI] Pixel loaded - No recipients found in message');
         }
       }
     } catch (lookupError) {
@@ -88,10 +94,12 @@ router.get('/pixel', async (req, res) => {
 
     await OpenEvent.create({
       messageUid: uid,
-      recipientEmail,
+      recipientEmail, // Will be null if multiple recipients or lookup failed
       ipHash: hashIp(ip, userAgent),
       userAgent
     });
+    
+    console.log('[MailTracker AI] OpenEvent created:', { messageUid: uid, recipientEmail, hasRecipientEmail: !!recipientEmail });
   } catch (error) {
     console.error('[MailTracker AI] pixel logging error', error);
   }
@@ -155,12 +163,22 @@ router.get('/stats/:uid', async (req, res) => {
       ...(message.recipients.bcc || [])
     ].filter(Boolean);
 
+    // Normalize email for comparison (lowercase, trim)
+    const normalizeEmail = (email) => (email || '').toLowerCase().trim();
+
     const recipientStatus = allRecipients.map(email => {
-      const hasOpened = opens.some(open => open.recipientEmail === email);
+      // Only mark as read if there's an actual open event with matching recipientEmail
+      const matchingOpen = opens.find(open => 
+        open.recipientEmail && 
+        normalizeEmail(open.recipientEmail) === normalizeEmail(email)
+      );
+      
+      const hasOpened = !!matchingOpen;
+      
       return {
         email,
-        read: hasOpened,
-        readAt: hasOpened ? opens.find(open => open.recipientEmail === email)?.createdAt : null
+        read: hasOpened, // Only true if recipient actually opened
+        readAt: hasOpened ? matchingOpen.createdAt : null
       };
     });
 
@@ -225,13 +243,24 @@ router.get('/stats/user/:userId', async (req, res) => {
         ...(message.recipients.bcc || [])
       ].filter(Boolean);
 
+      // Normalize email for comparison (lowercase, trim)
+      const normalizeEmail = (email) => (email || '').toLowerCase().trim();
+
       const messageOpens = detailedOpens.filter(open => open.messageUid === message.uid);
+      
       const recipientStatus = allRecipients.map(email => {
-        const hasOpened = messageOpens.some(open => open.recipientEmail === email);
+        // Only mark as read if there's an actual open event with matching recipientEmail
+        const matchingOpen = messageOpens.find(open => 
+          open.recipientEmail && 
+          normalizeEmail(open.recipientEmail) === normalizeEmail(email)
+        );
+        
+        const hasOpened = !!matchingOpen;
+        
         return {
           email,
-          read: hasOpened,
-          readAt: hasOpened ? messageOpens.find(open => open.recipientEmail === email)?.createdAt : null
+          read: hasOpened, // Only true if recipient actually opened
+          readAt: hasOpened ? matchingOpen.createdAt : null
         };
       });
 
