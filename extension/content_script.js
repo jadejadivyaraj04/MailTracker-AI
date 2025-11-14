@@ -43,18 +43,63 @@ const extractRecipients = composeRoot => {
   const allFoundEmails = new Set();
 
   // Helper function to extract email from text
+  // More strict regex to avoid splitting valid emails incorrectly
   const extractEmailsFromText = (text) => {
     if (!text || typeof text !== 'string') return [];
-    const emailRegex = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/g;
+    // Improved regex: requires word boundary before @ or start of string, and proper domain structure
+    // This prevents matching partial emails like "6@gmail.com" from "jdivyaraj6@gmail.com"
+    const emailRegex = /\b([a-zA-Z0-9][a-zA-Z0-9._+-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,})\b/g;
     const matches = text.match(emailRegex) || [];
-    return matches.map(email => email.toLowerCase().trim());
+    return matches.map(email => email.toLowerCase().trim()).filter(email => {
+      // Additional validation: ensure it's a proper email structure
+      const parts = email.split('@');
+      if (parts.length !== 2) return false;
+      const [local, domain] = parts;
+      // Local part should be at least 1 char, domain should have at least one dot and proper TLD
+      return local.length >= 1 && 
+             domain.includes('.') && 
+             domain.split('.').pop().length >= 2 &&
+             !domain.startsWith('.') &&
+             !domain.endsWith('.');
+    });
   };
 
-  // Helper function to validate email
+  // Helper function to validate email - more strict
   const isValidEmail = (email) => {
     if (!email || typeof email !== 'string') return false;
     const normalized = email.trim().toLowerCase();
-    return /^[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/.test(normalized);
+    
+    // Basic format check
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._+-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$/.test(normalized)) {
+      return false;
+    }
+    
+    // Split and validate parts
+    const parts = normalized.split('@');
+    if (parts.length !== 2) return false;
+    
+    const [local, domain] = parts;
+    
+    // Local part validation
+    if (local.length < 1 || local.length > 64) return false;
+    if (local.startsWith('.') || local.endsWith('.')) return false;
+    if (local.includes('..')) return false; // No consecutive dots
+    
+    // Domain validation
+    if (domain.length < 4 || domain.length > 255) return false; // min: a.co, max: 255
+    if (domain.startsWith('.') || domain.endsWith('.')) return false;
+    if (domain.includes('..')) return false; // No consecutive dots
+    
+    // Domain must have at least one dot and valid TLD
+    const domainParts = domain.split('.');
+    if (domainParts.length < 2) return false;
+    const tld = domainParts[domainParts.length - 1];
+    if (tld.length < 2) return false; // TLD must be at least 2 chars
+    
+    // Reject obviously invalid emails (like single digit before @)
+    if (/^[0-9]+@/.test(normalized)) return false; // Reject "6@gmail.com" type patterns
+    
+    return true;
   };
 
   // Helper function to extract from "Name <email>" format
@@ -646,59 +691,55 @@ const extractRecipients = composeRoot => {
   });
 
   /**
-   * Split concatenated emails by detecting TLD boundaries
+   * Split concatenated emails by detecting boundaries
+   * Only split if we're confident emails are actually concatenated
    * Example: "email1@example.comemail2@example.com" -> ["email1@example.com", "email2@example.com"]
    */
   const splitConcatenatedEmails = (text) => {
     if (!text || typeof text !== 'string') return [];
     
-    const emails = [];
-    // Common TLDs to split on
-    const tldPattern = /\.(com|net|org|edu|gov|mil|co|io|ai|uk|ca|au|de|fr|jp|in|cn|br|ru|es|it|nl|se|no|dk|fi|pl|cz|gr|pt|ie|be|at|ch|nz|za|mx|ar|cl|co|pe|ve|ec|uy|py|bo|cr|pa|do|gt|hn|ni|sv|bz|jm|tt|bb|gd|lc|vc|ag|dm|kn|mu|sc|tz|ke|ug|et|gh|ng|sn|ci|cm|ga|cg|cd|ao|mz|zw|bw|na|sz|ls|mg|rw|bi|td|ne|ml|bf|mr|gm|gw|gn|sl|lr|tg|bj|dj|km|so|er|sd|ly|tn|dz|ma|eh|ss|ye|iq|sy|jo|lb|ps|il|sa|ae|om|qa|bh|kw|ir|af|pk|bd|lk|mv|np|bt|mm|th|la|kh|vn|ph|my|sg|bn|id|tl|pg|fj|nc|pf|ws|to|vu|sb|ki|nr|pw|fm|mh|as|gu|mp|vi|pr|do|ht|cu|jm|bs|ky|tc|vg|ai|ms|bl|mf|pm|wf|tf|re|yt|mo|hk|tw|kr|jp|cn|mn|kz|uz|tj|kg|tm|az|ge|am|by|ua|md|ro|bg|rs|me|ba|hr|si|sk|hu|ee|lv|lt|is|fo|gl|ax|sj|sx|bq|cw|aw|ky|vg|ai|ms|bl|mf|pm|wf|tf|re|yt|mo|hk|tw|kr|jp|cn|mn|kz|uz|tj|kg|tm|az|ge|am|by|ua|md|ro|bg|rs|me|ba|hr|si|sk|hu|ee|lv|lt|is|fo|gl|ax|sj|sx|bq|cw|aw)\b/gi;
-    
-    // Find all email patterns in the text
-    const emailRegex = /[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/g;
-    let match;
+    // First, try to find all valid emails using strict regex
+    const emailRegex = /\b([a-zA-Z0-9][a-zA-Z0-9._+-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,})\b/g;
     const foundEmails = [];
+    let match;
     
     while ((match = emailRegex.exec(text)) !== null) {
-      foundEmails.push(match[0]);
+      const email = match[0].toLowerCase().trim();
+      // Validate each found email
+      if (isValidEmail(email)) {
+        foundEmails.push(email);
+      }
     }
     
-    // If we found emails, return them
+    // If we found valid emails, return them (don't try to split further)
     if (foundEmails.length > 0) {
       return foundEmails;
     }
     
-    // Fallback: Try to split by TLD pattern if no emails found
-    // This handles cases like "email1@example.comemail2@example.com"
-    const parts = text.split(tldPattern);
-    const potentialEmails = [];
-    let currentEmail = '';
-    
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      if (tldPattern.test('.' + part)) {
-        // This is a TLD
-        currentEmail += '.' + part;
-        // Check if currentEmail looks like an email
-        if (currentEmail.includes('@') && currentEmail.match(/^[a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/)) {
-          potentialEmails.push(currentEmail);
-          currentEmail = '';
+    // Only try complex splitting if no emails were found and text looks like it might contain concatenated emails
+    // This is a last resort - be very conservative
+    if (text.includes('@') && (text.match(/@/g) || []).length > 1) {
+      // Multiple @ signs might indicate concatenated emails
+      // Try splitting on common TLD boundaries followed by lowercase letter (start of next email)
+      const splitPattern = /(\.(com|net|org|edu|gov|mil|co|io|ai|uk|ca|au|de|fr|jp|in|cn|br|ru|es|it|nl|se|no|dk|fi|pl|cz|gr|pt|ie|be|at|ch|nz|za|mx|ar|cl|co|pe|ve|ec|uy|py|bo|cr|pa|do|gt|hn|ni|sv|bz|jm|tt|bb|gd|lc|vc|ag|dm|kn|mu|sc|tz|ke|ug|et|gh|ng|sn|ci|cm|ga|cg|cd|ao|mz|zw|bw|na|sz|ls|mg|rw|bi|td|ne|ml|bf|mr|gm|gw|gn|sl|lr|tg|bj|dj|km|so|er|sd|ly|tn|dz|ma|eh|ss|ye|iq|sy|jo|lb|ps|il|sa|ae|om|qa|bh|kw|ir|af|pk|bd|lk|mv|np|bt|mm|th|la|kh|vn|ph|my|sg|bn|id|tl|pg|fj|nc|pf|ws|to|vu|sb|ki|nr|pw|fm|mh|as|gu|mp|vi|pr|do|ht|cu|jm|bs|ky|tc|vg|ai|ms|bl|mf|pm|wf|tf|re|yt|mo|hk|tw|kr|jp|cn|mn|kz|uz|tj|kg|tm|az|ge|am|by|ua|md|ro|bg|rs|me|ba|hr|si|sk|hu|ee|lv|lt|is|fo|gl|ax|sj|sx|bq|cw|aw))(?=[a-z])/gi;
+      const parts = text.split(splitPattern);
+      const potentialEmails = [];
+      
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i].trim();
+        if (part && isValidEmail(part)) {
+          potentialEmails.push(part.toLowerCase());
         }
-      } else {
-        currentEmail += part;
+      }
+      
+      if (potentialEmails.length > 0) {
+        return potentialEmails;
       }
     }
     
-    // If we built any emails, return them
-    if (potentialEmails.length > 0) {
-      return potentialEmails;
-    }
-    
-    // Last resort: return the original text if it looks like an email
-    if (text.includes('@') && text.includes('.')) {
-      return [text];
+    // Last resort: if text itself is a valid email, return it
+    if (isValidEmail(text)) {
+      return [text.toLowerCase().trim()];
     }
     
     return [];
@@ -709,7 +750,7 @@ const extractRecipients = composeRoot => {
     if (!recipients[key] || !Array.isArray(recipients[key]) || !recipients[key].length) {
       delete recipients[key];
     } else {
-      // Normalize and validate all emails
+      // Normalize and validate all emails - be strict
       const normalizedEmails = new Set();
       
       recipients[key].forEach(email => {
@@ -718,26 +759,39 @@ const extractRecipients = composeRoot => {
         // Extract email from "Name <email>" format if present
         const cleanEmail = extractEmailFromFormat(email) || email.trim().toLowerCase();
         
-        // Split concatenated emails (if any)
-        const splitEmails = splitConcatenatedEmails(cleanEmail);
-        if (splitEmails.length > 0) {
-          splitEmails.forEach(e => {
+        // First, try to extract all valid emails from the text (handles concatenated emails)
+        const extractedEmails = extractEmailsFromText(cleanEmail);
+        
+        if (extractedEmails.length > 0) {
+          // We found emails using regex - use those
+          extractedEmails.forEach(e => {
             const normalized = e.trim().toLowerCase();
             if (isValidEmail(normalized)) {
               normalizedEmails.add(normalized);
             }
           });
         } else {
-          // Single email
-          const normalized = cleanEmail.trim().toLowerCase();
-          if (isValidEmail(normalized)) {
-            normalizedEmails.add(normalized);
+          // No emails found via regex, try splitConcatenatedEmails as fallback
+          const splitEmails = splitConcatenatedEmails(cleanEmail);
+          if (splitEmails.length > 0) {
+            splitEmails.forEach(e => {
+              const normalized = e.trim().toLowerCase();
+              if (isValidEmail(normalized)) {
+                normalizedEmails.add(normalized);
+              }
+            });
+          } else {
+            // Last resort: check if the whole string is a valid email
+            const normalized = cleanEmail.trim().toLowerCase();
+            if (isValidEmail(normalized)) {
+              normalizedEmails.add(normalized);
+            }
           }
         }
       });
       
-      // Convert Set back to array
-      recipients[key] = Array.from(normalizedEmails);
+      // Convert Set back to array and sort for consistency
+      recipients[key] = Array.from(normalizedEmails).sort();
       
       // Delete if empty after filtering
       if (recipients[key].length === 0) {
@@ -747,6 +801,25 @@ const extractRecipients = composeRoot => {
       }
     }
   });
+
+  // Final validation: Remove BCC if it seems like false positives
+  // BCC field is often hidden, so if we found BCC but no clear BCC field indicators, be suspicious
+  if (recipients.bcc && recipients.bcc.length > 0) {
+    // Check if BCC field is actually visible/used in the compose dialog
+    const bccFieldVisible = composeRoot.querySelector('div[aria-label*="bcc" i], div[aria-label*="Bcc" i], div[aria-label*="BCC" i]') ||
+                           Array.from(composeRoot.querySelectorAll('*')).some(el => {
+                             const text = (el.textContent || '').toLowerCase();
+                             const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                             return (text === 'bcc' || text === 'bcc:') && 
+                                    (ariaLabel.includes('bcc') || ariaLabel.includes('blind'));
+                           });
+    
+    // If BCC field not clearly visible and we have suspicious emails, remove them
+    if (!bccFieldVisible) {
+      console.log('[MailTracker AI] BCC field not clearly visible, removing potentially false BCC recipients');
+      delete recipients.bcc;
+    }
+  }
 
   // Final debug logging with summary
   const totalRecipients = (recipients.to?.length || 0) + 
