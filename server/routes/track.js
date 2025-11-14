@@ -65,8 +65,30 @@ router.get('/pixel', async (req, res) => {
     const ip = getClientIp(req);
     const userAgent = req.headers['user-agent'] || '';
 
+    // Look up message to determine recipient (for single-recipient emails)
+    let recipientEmail = null;
+    try {
+      const message = await Message.findOne({ uid });
+      if (message?.recipients) {
+        const allRecipients = [
+          ...(message.recipients.to || []),
+          ...(message.recipients.cc || []),
+          ...(message.recipients.bcc || [])
+        ].filter(Boolean);
+        
+        // Only track recipient if there's exactly one (we can't distinguish multiple)
+        if (allRecipients.length === 1) {
+          recipientEmail = allRecipients[0];
+        }
+      }
+    } catch (lookupError) {
+      // If message lookup fails, continue without recipient tracking
+      console.warn('[MailTracker AI] Could not lookup message for recipient tracking', lookupError);
+    }
+
     await OpenEvent.create({
       messageUid: uid,
+      recipientEmail,
       ipHash: hashIp(ip, userAgent),
       userAgent
     });
@@ -126,12 +148,29 @@ router.get('/stats/:uid', async (req, res) => {
       ClickEvent.find({ messageUid: uid }).sort({ createdAt: 1 })
     ]);
 
+    // Calculate recipient read status
+    const allRecipients = [
+      ...(message.recipients.to || []),
+      ...(message.recipients.cc || []),
+      ...(message.recipients.bcc || [])
+    ].filter(Boolean);
+
+    const recipientStatus = allRecipients.map(email => {
+      const hasOpened = opens.some(open => open.recipientEmail === email);
+      return {
+        email,
+        read: hasOpened,
+        readAt: hasOpened ? opens.find(open => open.recipientEmail === email)?.createdAt : null
+      };
+    });
+
     return res.json({
       message,
       openCount: opens.length,
       clickCount: clicks.length,
       opens,
-      clicks
+      clicks,
+      recipientStatus // New: per-recipient read status
     });
   } catch (error) {
     console.error('[MailTracker AI] stats error', error);
@@ -170,9 +209,31 @@ router.get('/stats/user/:userId', async (req, res) => {
     const openMap = Object.fromEntries(openAgg.map(item => [item._id, item]));
     const clickMap = Object.fromEntries(clickAgg.map(item => [item._id, item]));
 
+    // Get detailed opens for recipient status
+    const detailedOpens = await OpenEvent.find({ messageUid: { $in: uids } })
+      .select('messageUid recipientEmail createdAt')
+      .lean();
+
     const summary = messages.map(message => {
       const opens = openMap[message.uid];
       const clicks = clickMap[message.uid];
+
+      // Calculate recipient read status for this message
+      const allRecipients = [
+        ...(message.recipients.to || []),
+        ...(message.recipients.cc || []),
+        ...(message.recipients.bcc || [])
+      ].filter(Boolean);
+
+      const messageOpens = detailedOpens.filter(open => open.messageUid === message.uid);
+      const recipientStatus = allRecipients.map(email => {
+        const hasOpened = messageOpens.some(open => open.recipientEmail === email);
+        return {
+          email,
+          read: hasOpened,
+          readAt: hasOpened ? messageOpens.find(open => open.recipientEmail === email)?.createdAt : null
+        };
+      });
 
       return {
         uid: message.uid,
@@ -182,7 +243,8 @@ router.get('/stats/user/:userId', async (req, res) => {
         openCount: opens?.count || 0,
         clickCount: clicks?.count || 0,
         lastOpenedAt: opens?.lastOpenedAt || null,
-        lastClickedAt: clicks?.lastClickedAt || null
+        lastClickedAt: clicks?.lastClickedAt || null,
+        recipientStatus // New: per-recipient read status
       };
     });
 

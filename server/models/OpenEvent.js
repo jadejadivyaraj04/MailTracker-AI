@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 const openEventSchema = new mongoose.Schema(
   {
     messageUid: { type: String, required: true, index: true },
+    recipientEmail: { type: String, index: true }, // Track which recipient opened (for single-recipient emails)
     ipHash: { type: String, required: true },
     userAgent: { type: String },
     metadata: { type: mongoose.Schema.Types.Mixed }
