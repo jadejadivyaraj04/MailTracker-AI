@@ -1283,12 +1283,13 @@ const rewriteLinks = (bodyEl, uid) => {
  * Send metadata about the outgoing email to the backend
  * Returns recipientTokens if available
  */
-const registerMessage = async ({ uid, recipients, subject }) => {
+const registerMessage = async ({ uid, recipients, subject, senderEmail }) => {
   // Debug logging
   console.log('[MailTracker AI] Registering message:', {
     uid,
     subject,
     recipients,
+    senderEmail,
     userId
   });
 
@@ -1300,6 +1301,7 @@ const registerMessage = async ({ uid, recipients, subject }) => {
         uid,
         recipients,
         subject,
+        senderEmail, // Include sender email
         timestamp: new Date().toISOString(),
         userId
       })
@@ -1418,6 +1420,10 @@ const handleSendClick = async event => {
   const recipients = await extractRecipientsWithRetry(composeRoot, 5, 250); // More retries, longer delay
   const subject = subjectInput ? subjectInput.value : '';
 
+  // Extract sender email to exclude sender's own opens
+  const senderEmail = recipientExtractor.extractSender(composeRoot);
+  console.log('[MailTracker AI] Sender email:', senderEmail);
+
   // Final check: Log what we extracted
   const totalRecipients = (recipients.to?.length || 0) +
     (recipients.cc?.length || 0) +
@@ -1425,6 +1431,7 @@ const handleSendClick = async event => {
 
   console.log('[MailTracker AI] ============================================');
   console.log('[MailTracker AI] Extraction Summary:');
+  console.log('[MailTracker AI]   Sender:', senderEmail || 'Not detected');
   console.log('[MailTracker AI]   To:', recipients.to?.length || 0, recipients.to || []);
   console.log('[MailTracker AI]   CC:', recipients.cc?.length || 0, recipients.cc || []);
   console.log('[MailTracker AI]   BCC:', recipients.bcc?.length || 0, recipients.bcc || []);
@@ -1442,7 +1449,7 @@ const handleSendClick = async event => {
   }
 
   // Register message first to get recipient tokens
-  const recipientTokens = await registerMessage({ uid, recipients, subject });
+  const recipientTokens = await registerMessage({ uid, recipients, subject, senderEmail });
 
   // Add tracking pixels with recipient tokens (if available)
   if (bodyEl) {

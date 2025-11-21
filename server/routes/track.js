@@ -22,7 +22,7 @@ const getClientIp = req => {
 
 router.post('/register', async (req, res) => {
   try {
-    const { uid, recipients = {}, subject = '', timestamp, userId = 'default', metadata = {} } = req.body || {};
+    const { uid, recipients = {}, subject = '', timestamp, userId = 'default', senderEmail, metadata = {} } = req.body || {};
 
     if (!uid) {
       return res.status(400).json({ error: 'uid is required' });
@@ -40,6 +40,9 @@ router.post('/register', async (req, res) => {
       cc: normalizeEmailArray(recipients.cc),
       bcc: normalizeEmailArray(recipients.bcc)
     };
+
+    // Normalize sender email
+    const normalizedSenderEmail = senderEmail ? senderEmail.toLowerCase().trim() : null;
 
     // Generate unique token for each recipient (To, Cc, Bcc)
     const recipientTokens = {};
@@ -59,6 +62,7 @@ router.post('/register', async (req, res) => {
       uid,
       subject,
       recipients: normalizedRecipients,
+      senderEmail: normalizedSenderEmail,
       userId,
       recipientCount: allRecipients.length
     });
@@ -68,6 +72,7 @@ router.post('/register', async (req, res) => {
       {
         uid,
         userId,
+        senderEmail: normalizedSenderEmail, // Store sender email
         subject,
         recipients: normalizedRecipients,
         recipientTokens, // Store tokens in database
@@ -259,7 +264,8 @@ router.get('/stats/:uid', async (req, res) => {
       // Find exact match - but only count opens that happen AFTER the email was sent
       // This prevents sender previews from being counted as recipient opens
       const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-      const BUFFER_SECONDS = 2; // Buffer to account for timing differences (reduced for testing)
+      const BUFFER_SECONDS = 30; // Buffer to prevent sender's own preview from counting
+      const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
 
       const matchingOpen = opensWithRecipient.find(open => {
         const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
@@ -267,6 +273,12 @@ router.get('/stats/:uid', async (req, res) => {
           normalizedOpenEmail === normalizedRecipientEmail;
 
         if (!emailMatches) {
+          return false;
+        }
+
+        // Exclude opens where recipient is the sender (viewing own sent email)
+        if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
+          console.log('[MailTracker AI] Excluding sender open:', normalizedOpenEmail);
           return false;
         }
 
@@ -373,7 +385,8 @@ router.get('/stats/user/:userId', async (req, res) => {
         // Find exact match - but only count opens that happen AFTER the email was sent
         // This prevents sender previews from being counted as recipient opens
         const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-        const BUFFER_SECONDS = 2; // Buffer to account for timing differences (reduced for testing)
+        const BUFFER_SECONDS = 30; // Buffer to prevent sender's own preview from counting
+        const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
 
         const matchingOpen = opensWithRecipient.find(open => {
           const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
@@ -381,6 +394,11 @@ router.get('/stats/user/:userId', async (req, res) => {
             normalizedOpenEmail === normalizedRecipientEmail;
 
           if (!emailMatches) {
+            return false;
+          }
+
+          // Exclude opens where recipient is the sender (viewing own sent email)
+          if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
             return false;
           }
 

@@ -13,6 +13,7 @@ const messageSchema = new mongoose.Schema(
   {
     uid: { type: String, required: true, unique: true, index: true },
     userId: { type: String, default: 'default' },
+    senderEmail: { type: String }, // Email address of the sender (to exclude sender opens)
     subject: { type: String, default: '' },
     recipients: { type: recipientSchema, default: () => ({}) },
     recipientTokens: { type: mongoose.Schema.Types.Mixed }, // Token mapping: { "email": "token" }
