@@ -80,8 +80,17 @@ router.post('/register', async (req, res) => {
     // Return recipientTokens to extension
     return res.json({ ok: true, recipientTokens });
   } catch (error) {
-    console.error('[MailTracker AI] register error', error);
-    return res.status(500).json({ error: 'Failed to save message metadata' });
+    console.error('[MailTracker AI] register error:', error);
+    console.error('[MailTracker AI] Error details:', {
+      message: error.message,
+      stack: error.stack,
+      uid,
+      recipientCount: allRecipients?.length || 0
+    });
+    return res.status(500).json({
+      error: 'Failed to save message metadata',
+      details: error.message
+    });
   }
 });
 
