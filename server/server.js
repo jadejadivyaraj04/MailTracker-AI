@@ -13,8 +13,14 @@ const PORT = process.env.PORT || 5000;
 
 app.set('trust proxy', 1);
 
-// Security middleware
-app.use(helmet());
+// Security middleware - configure Helmet to allow cross-origin requests for tracking
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: false, // Disable CSP for tracking pixel
+  })
+);
 
 // ✅ OPTION 2 — Allow ANY origin (fixes curl + browser CORS errors)
 app.use(
@@ -26,8 +32,11 @@ app.use(
   })
 );
 
-// Handle OPTIONS preflight manually
+// Handle OPTIONS preflight manually with CORS headers
 app.options("*", (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.sendStatus(200);
 });
 

@@ -68,10 +68,19 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// Handle OPTIONS preflight for pixel endpoint
+router.options('/pixel', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.sendStatus(200);
+});
+
 router.get('/pixel', async (req, res) => {
   const { uid } = req.query;
 
   if (!uid) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(400).end();
   }
 
@@ -120,6 +129,10 @@ router.get('/pixel', async (req, res) => {
     console.error('[MailTracker AI] pixel logging error', error);
   }
 
+  // Set CORS headers for cross-origin image loading
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'image/gif');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
