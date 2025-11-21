@@ -31,7 +31,7 @@ router.post('/register', async (req, res) => {
     const sentAt = timestamp ? new Date(timestamp) : new Date();
 
     // Normalize all recipient emails (lowercase, trim)
-    const normalizeEmailArray = (arr) => (arr || []).map(email => 
+    const normalizeEmailArray = (arr) => (arr || []).map(email =>
       (email || '').toLowerCase().trim()
     ).filter(Boolean);
 
@@ -41,11 +41,26 @@ router.post('/register', async (req, res) => {
       bcc: normalizeEmailArray(recipients.bcc)
     };
 
+    // Generate unique token for each recipient (To, Cc, Bcc)
+    const recipientTokens = {};
+    const allRecipients = [
+      ...normalizedRecipients.to,
+      ...normalizedRecipients.cc,
+      ...normalizedRecipients.bcc
+    ];
+
+    allRecipients.forEach(email => {
+      // Generate a unique token for each recipient
+      const token = crypto.randomBytes(16).toString('hex');
+      recipientTokens[email] = token;
+    });
+
     console.log('[MailTracker AI] Registering message:', {
       uid,
       subject,
       recipients: normalizedRecipients,
-      userId
+      userId,
+      recipientCount: allRecipients.length
     });
 
     await Message.findOneAndUpdate(
@@ -55,13 +70,15 @@ router.post('/register', async (req, res) => {
         userId,
         subject,
         recipients: normalizedRecipients,
+        recipientTokens, // Store tokens in database
         sentAt,
         metadata
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    return res.json({ ok: true });
+    // Return recipientTokens to extension
+    return res.json({ ok: true, recipientTokens });
   } catch (error) {
     console.error('[MailTracker AI] register error', error);
     return res.status(500).json({ error: 'Failed to save message metadata' });
@@ -77,7 +94,7 @@ router.options('/pixel', (req, res) => {
 });
 
 router.get('/pixel', async (req, res) => {
-  const { uid } = req.query;
+  const { uid, token } = req.query; // Extract both uid and token
 
   if (!uid) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -88,43 +105,66 @@ router.get('/pixel', async (req, res) => {
     const ip = getClientIp(req);
     const userAgent = req.headers['user-agent'] || '';
 
-    // Look up message to determine recipient (only track "To" recipients)
+    // Look up message and validate token to identify recipient
     let recipientEmail = null;
+
     try {
       const message = await Message.findOne({ uid });
-      if (message?.recipients) {
+
+      if (message && message.recipientTokens && token) {
+        // Token-based identification (new method - most accurate)
+        const tokenMap = message.recipientTokens;
+
+        // Convert Map to Object if needed (Mongoose returns Map for Map type)
+        const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
+
+        // Find which recipient this token belongs to
+        const matchingEntry = Object.entries(tokens).find(([email, storedToken]) => storedToken === token);
+
+        if (matchingEntry) {
+          recipientEmail = matchingEntry[0]; // Get email from token
+          console.log('[MailTracker AI] Pixel loaded - Recipient identified via token:', recipientEmail);
+        } else {
+          console.log('[MailTracker AI] Pixel loaded - Token provided but invalid:', token);
+        }
+      } else if (message && message.recipients && !token) {
+        // Fallback for backward compatibility (old emails without tokens)
         const toRecipients = (message.recipients.to || []).filter(Boolean);
-        
-        // Only track recipient if there's exactly one "To" recipient (we can't distinguish multiple)
-        // Normalize email (lowercase, trim) for consistent matching
+
         if (toRecipients.length === 1) {
           const normalizedEmail = toRecipients[0].toLowerCase().trim();
-          // Only set recipientEmail if it's a valid non-empty string
           if (normalizedEmail && normalizedEmail.length > 0) {
             recipientEmail = normalizedEmail;
-            console.log('[MailTracker AI] Pixel loaded - Single "To" recipient detected:', recipientEmail);
-          } else {
-            console.log('[MailTracker AI] Pixel loaded - Invalid recipient email, skipping recipient tracking');
+            console.log('[MailTracker AI] Pixel loaded - Single "To" recipient (fallback):', recipientEmail);
           }
         } else if (toRecipients.length > 1) {
-          console.log('[MailTracker AI] Pixel loaded - Multiple "To" recipients, cannot track individual opens:', toRecipients.length);
+          console.log('[MailTracker AI] Pixel loaded - Multiple recipients but no token, cannot identify individual');
         } else {
-          console.log('[MailTracker AI] Pixel loaded - No "To" recipients found in message');
+          console.log('[MailTracker AI] Pixel loaded - No "To" recipients found');
         }
+      } else if (!message) {
+        console.log('[MailTracker AI] Pixel loaded - Message not found for uid:', uid);
+      } else if (!token) {
+        console.log('[MailTracker AI] Pixel loaded - No token provided (old pixel format)');
       }
     } catch (lookupError) {
-      // If message lookup fails, continue without recipient tracking
       console.warn('[MailTracker AI] Could not lookup message for recipient tracking', lookupError);
     }
 
+    // Create OpenEvent (with or without recipient identification)
     await OpenEvent.create({
       messageUid: uid,
-      recipientEmail, // Will be null if multiple recipients or lookup failed
+      recipientEmail, // Will be null if token invalid or not provided
       ipHash: hashIp(ip, userAgent),
       userAgent
     });
-    
-    console.log('[MailTracker AI] OpenEvent created:', { messageUid: uid, recipientEmail, hasRecipientEmail: !!recipientEmail });
+
+    console.log('[MailTracker AI] OpenEvent created:', {
+      messageUid: uid,
+      recipientEmail,
+      hasToken: !!token,
+      tokenValid: !!recipientEmail
+    });
   } catch (error) {
     console.error('[MailTracker AI] pixel logging error', error);
   }
@@ -195,46 +235,46 @@ router.get('/stats/:uid', async (req, res) => {
       // Only mark as read if there's an actual open event with matching recipientEmail
       // Strict validation: recipientEmail must be a non-empty string and match exactly
       const normalizedRecipientEmail = normalizeEmail(email);
-      
+
       // Default to false - only set to true if we find a confirmed match
       let hasOpened = false;
       let readAt = null;
-      
+
       // Only check opens that have a recipientEmail (skip null/undefined)
-      const opensWithRecipient = opens.filter(open => 
-        open.recipientEmail && 
-        typeof open.recipientEmail === 'string' && 
+      const opensWithRecipient = opens.filter(open =>
+        open.recipientEmail &&
+        typeof open.recipientEmail === 'string' &&
         open.recipientEmail.trim().length > 0
       );
-      
+
       // Find exact match - but only count opens that happen AFTER the email was sent
       // This prevents sender previews from being counted as recipient opens
       const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-      const BUFFER_SECONDS = 10; // Buffer to account for timing differences
-      
+      const BUFFER_SECONDS = 2; // Buffer to account for timing differences (reduced for testing)
+
       const matchingOpen = opensWithRecipient.find(open => {
         const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
-        const emailMatches = normalizedOpenEmail && 
-                             normalizedOpenEmail === normalizedRecipientEmail;
-        
+        const emailMatches = normalizedOpenEmail &&
+          normalizedOpenEmail === normalizedRecipientEmail;
+
         if (!emailMatches) {
           return false;
         }
-        
+
         // Only count opens that happen after the email was sent (with buffer)
         const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
         const timeDiffSeconds = (openTime - sentAtTime) / 1000;
-        
+
         // Open must happen at least BUFFER_SECONDS after send time
         return timeDiffSeconds >= BUFFER_SECONDS;
       });
-      
+
       // Only set to true if we have a confirmed match that happened after sending
       if (matchingOpen) {
         hasOpened = true;
         readAt = matchingOpen.createdAt;
       }
-      
+
       // Explicitly return false if no match found
       return {
         email,
@@ -304,51 +344,51 @@ router.get('/stats/user/:userId', async (req, res) => {
       const normalizeEmail = (email) => (email || '').toLowerCase().trim();
 
       const messageOpens = detailedOpens.filter(open => open.messageUid === message.uid);
-      
+
       const recipientStatus = toRecipients.map(email => {
         // Only mark as read if there's an actual open event with matching recipientEmail
         // Strict validation: recipientEmail must be a non-empty string and match exactly
         const normalizedRecipientEmail = normalizeEmail(email);
-        
+
         // Default to false - only set to true if we find a confirmed match
         let hasOpened = false;
         let readAt = null;
-        
+
         // Only check opens that have a recipientEmail (skip null/undefined)
-        const opensWithRecipient = messageOpens.filter(open => 
-          open.recipientEmail && 
-          typeof open.recipientEmail === 'string' && 
+        const opensWithRecipient = messageOpens.filter(open =>
+          open.recipientEmail &&
+          typeof open.recipientEmail === 'string' &&
           open.recipientEmail.trim().length > 0
         );
-        
+
         // Find exact match - but only count opens that happen AFTER the email was sent
         // This prevents sender previews from being counted as recipient opens
         const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-        const BUFFER_SECONDS = 10; // Buffer to account for timing differences
-        
+        const BUFFER_SECONDS = 2; // Buffer to account for timing differences (reduced for testing)
+
         const matchingOpen = opensWithRecipient.find(open => {
           const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
-          const emailMatches = normalizedOpenEmail && 
-                               normalizedOpenEmail === normalizedRecipientEmail;
-          
+          const emailMatches = normalizedOpenEmail &&
+            normalizedOpenEmail === normalizedRecipientEmail;
+
           if (!emailMatches) {
             return false;
           }
-          
+
           // Only count opens that happen after the email was sent (with buffer)
           const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
           const timeDiffSeconds = (openTime - sentAtTime) / 1000;
-          
+
           // Open must happen at least BUFFER_SECONDS after send time
           return timeDiffSeconds >= BUFFER_SECONDS;
         });
-        
+
         // Only set to true if we have a confirmed match that happened after sending
         if (matchingOpen) {
           hasOpened = true;
           readAt = matchingOpen.createdAt;
         }
-        
+
         // Explicitly return false if no match found
         return {
           email,
