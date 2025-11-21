@@ -79,26 +79,22 @@ router.get('/pixel', async (req, res) => {
     const ip = getClientIp(req);
     const userAgent = req.headers['user-agent'] || '';
 
-    // Look up message to determine recipient (for single-recipient emails)
+    // Look up message to determine recipient (only track "To" recipients)
     let recipientEmail = null;
     try {
       const message = await Message.findOne({ uid });
       if (message?.recipients) {
-        const allRecipients = [
-          ...(message.recipients.to || []),
-          ...(message.recipients.cc || []),
-          ...(message.recipients.bcc || [])
-        ].filter(Boolean);
+        const toRecipients = (message.recipients.to || []).filter(Boolean);
         
-        // Only track recipient if there's exactly one (we can't distinguish multiple)
+        // Only track recipient if there's exactly one "To" recipient (we can't distinguish multiple)
         // Normalize email (lowercase, trim) for consistent matching
-        if (allRecipients.length === 1) {
-          recipientEmail = allRecipients[0].toLowerCase().trim();
-          console.log('[MailTracker AI] Pixel loaded - Single recipient detected:', recipientEmail);
-        } else if (allRecipients.length > 1) {
-          console.log('[MailTracker AI] Pixel loaded - Multiple recipients, cannot track individual opens:', allRecipients.length);
+        if (toRecipients.length === 1) {
+          recipientEmail = toRecipients[0].toLowerCase().trim();
+          console.log('[MailTracker AI] Pixel loaded - Single "To" recipient detected:', recipientEmail);
+        } else if (toRecipients.length > 1) {
+          console.log('[MailTracker AI] Pixel loaded - Multiple "To" recipients, cannot track individual opens:', toRecipients.length);
         } else {
-          console.log('[MailTracker AI] Pixel loaded - No recipients found in message');
+          console.log('[MailTracker AI] Pixel loaded - No "To" recipients found in message');
         }
       }
     } catch (lookupError) {
@@ -170,17 +166,13 @@ router.get('/stats/:uid', async (req, res) => {
       ClickEvent.find({ messageUid: uid }).sort({ createdAt: 1 })
     ]);
 
-    // Calculate recipient read status
-    const allRecipients = [
-      ...(message.recipients.to || []),
-      ...(message.recipients.cc || []),
-      ...(message.recipients.bcc || [])
-    ].filter(Boolean);
+    // Calculate recipient read status (only for "To" recipients)
+    const toRecipients = (message.recipients.to || []).filter(Boolean);
 
     // Normalize email for comparison (lowercase, trim)
     const normalizeEmail = (email) => (email || '').toLowerCase().trim();
 
-    const recipientStatus = allRecipients.map(email => {
+    const recipientStatus = toRecipients.map(email => {
       // Only mark as read if there's an actual open event with matching recipientEmail
       const matchingOpen = opens.find(open => 
         open.recipientEmail && 
@@ -250,19 +242,15 @@ router.get('/stats/user/:userId', async (req, res) => {
       const opens = openMap[message.uid];
       const clicks = clickMap[message.uid];
 
-      // Calculate recipient read status for this message
-      const allRecipients = [
-        ...(message.recipients.to || []),
-        ...(message.recipients.cc || []),
-        ...(message.recipients.bcc || [])
-      ].filter(Boolean);
+      // Calculate recipient read status for this message (only for "To" recipients)
+      const toRecipients = (message.recipients.to || []).filter(Boolean);
 
       // Normalize email for comparison (lowercase, trim)
       const normalizeEmail = (email) => (email || '').toLowerCase().trim();
 
       const messageOpens = detailedOpens.filter(open => open.messageUid === message.uid);
       
-      const recipientStatus = allRecipients.map(email => {
+      const recipientStatus = toRecipients.map(email => {
         // Only mark as read if there's an actual open event with matching recipientEmail
         const matchingOpen = messageOpens.find(open => 
           open.recipientEmail && 
