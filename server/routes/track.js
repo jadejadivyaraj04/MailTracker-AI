@@ -276,18 +276,23 @@ router.get('/stats/:uid', async (req, res) => {
           return false;
         }
 
-        // Exclude opens where recipient is the sender (viewing own sent email)
-        if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
-          console.log('[MailTracker AI] Excluding sender open:', normalizedOpenEmail);
-          return false;
-        }
+        // TEMPORARY: All checks disabled for testing
+        console.log('[MailTracker AI] TESTING MODE: Accepting all opens (sender/time checks disabled)');
 
-        // Only count opens that happen after the email was sent (with buffer)
-        const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
-        const timeDiffSeconds = (openTime - sentAtTime) / 1000;
+        // // Exclude opens where recipient is the sender (viewing own sent email)
+        // if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
+        //   console.log('[MailTracker AI] Excluding sender open:', normalizedOpenEmail);
+        //   return false;
+        // }
 
-        // Open must happen at least BUFFER_SECONDS after send time
-        return timeDiffSeconds >= BUFFER_SECONDS;
+        // // Only count opens that happen after the email was sent (with buffer)
+        // const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
+        // const timeDiffSeconds = (openTime - sentAtTime) / 1000;
+
+        // // Open must happen at least BUFFER_SECONDS after send time
+        // return timeDiffSeconds >= BUFFER_SECONDS;
+
+        return true; // Accept ALL opens for testing
       });
 
       // Only set to true if we have a confirmed match that happened after sending
@@ -404,17 +409,22 @@ router.get('/stats/user/:userId', async (req, res) => {
               return false;
             }
 
-            // Exclude opens where recipient is the sender (viewing own sent email)
-            if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
-              return false;
-            }
+            // TEMPORARY: All checks disabled for testing
+            console.log('[MailTracker AI] TESTING MODE: Accepting all opens (sender/time checks disabled)');
 
-            // Only count opens that happen after the email was sent (with buffer)
-            const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
-            const timeDiffSeconds = (openTime - sentAtTime) / 1000;
+            // // Exclude opens where recipient is the sender (viewing own sent email)
+            // if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
+            //   return false;
+            // }
 
-            // Open must happen at least BUFFER_SECONDS after send time
-            return timeDiffSeconds >= BUFFER_SECONDS;
+            // // Only count opens that happen after the email was sent (with buffer)
+            // const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
+            // const timeDiffSeconds = (openTime - sentAtTime) / 1000;
+
+            // // Open must happen at least BUFFER_SECONDS after send time
+            // return timeDiffSeconds >= BUFFER_SECONDS;
+
+            return true; // Accept ALL opens for testing
           });
 
           // Only set to true if we have a confirmed match that happened after sending
