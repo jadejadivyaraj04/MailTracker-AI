@@ -1421,8 +1421,18 @@ const handleSendClick = async event => {
   const subject = subjectInput ? subjectInput.value : '';
 
   // Extract sender email to exclude sender's own opens
-  const senderEmail = recipientExtractor.extractSender(composeRoot);
-  console.log('[MailTracker AI] Sender email:', senderEmail);
+  // First try to extract from DOM
+  let senderEmail = recipientExtractor.extractSender(composeRoot);
+
+  // If extraction failed, use the stored userId as sender email
+  // (userId should be set to the user's email address)
+  if (!senderEmail) {
+    const stored = await chrome.storage.sync.get(['userId']);
+    senderEmail = stored.userId || 'default';
+    console.log('[MailTracker AI] Sender extraction failed, using userId:', senderEmail);
+  } else {
+    console.log('[MailTracker AI] Sender email extracted:', senderEmail);
+  }
 
   // Final check: Log what we extracted
   const totalRecipients = (recipients.to?.length || 0) +
