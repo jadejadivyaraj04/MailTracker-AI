@@ -79,7 +79,8 @@ function EmailList({ messages = [] }) {
                 {toRecipients.map((email, idx) => {
                   const normalizedEmail = email.toLowerCase().trim();
                   const status = statusMap.get(normalizedEmail);
-                  const isRead = status?.read === true;
+                  // Explicitly check: read must be exactly true, and we must have a status object
+                  const isRead = status && status.read === true && typeof status.read === 'boolean';
                   
                   return (
                     <div

@@ -89,8 +89,14 @@ router.get('/pixel', async (req, res) => {
         // Only track recipient if there's exactly one "To" recipient (we can't distinguish multiple)
         // Normalize email (lowercase, trim) for consistent matching
         if (toRecipients.length === 1) {
-          recipientEmail = toRecipients[0].toLowerCase().trim();
-          console.log('[MailTracker AI] Pixel loaded - Single "To" recipient detected:', recipientEmail);
+          const normalizedEmail = toRecipients[0].toLowerCase().trim();
+          // Only set recipientEmail if it's a valid non-empty string
+          if (normalizedEmail && normalizedEmail.length > 0) {
+            recipientEmail = normalizedEmail;
+            console.log('[MailTracker AI] Pixel loaded - Single "To" recipient detected:', recipientEmail);
+          } else {
+            console.log('[MailTracker AI] Pixel loaded - Invalid recipient email, skipping recipient tracking');
+          }
         } else if (toRecipients.length > 1) {
           console.log('[MailTracker AI] Pixel loaded - Multiple "To" recipients, cannot track individual opens:', toRecipients.length);
         } else {
@@ -174,10 +180,21 @@ router.get('/stats/:uid', async (req, res) => {
 
     const recipientStatus = toRecipients.map(email => {
       // Only mark as read if there's an actual open event with matching recipientEmail
-      const matchingOpen = opens.find(open => 
-        open.recipientEmail && 
-        normalizeEmail(open.recipientEmail) === normalizeEmail(email)
-      );
+      // Strict validation: recipientEmail must be a non-empty string and match exactly
+      const normalizedRecipientEmail = normalizeEmail(email);
+      const matchingOpen = opens.find(open => {
+        // Must have recipientEmail and it must be a string
+        if (!open.recipientEmail || typeof open.recipientEmail !== 'string') {
+          return false;
+        }
+        // Must not be empty after normalization
+        const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
+        if (!normalizedOpenEmail) {
+          return false;
+        }
+        // Must match exactly
+        return normalizedOpenEmail === normalizedRecipientEmail;
+      });
       
       const hasOpened = !!matchingOpen;
       
@@ -252,10 +269,21 @@ router.get('/stats/user/:userId', async (req, res) => {
       
       const recipientStatus = toRecipients.map(email => {
         // Only mark as read if there's an actual open event with matching recipientEmail
-        const matchingOpen = messageOpens.find(open => 
-          open.recipientEmail && 
-          normalizeEmail(open.recipientEmail) === normalizeEmail(email)
-        );
+        // Strict validation: recipientEmail must be a non-empty string and match exactly
+        const normalizedRecipientEmail = normalizeEmail(email);
+        const matchingOpen = messageOpens.find(open => {
+          // Must have recipientEmail and it must be a string
+          if (!open.recipientEmail || typeof open.recipientEmail !== 'string') {
+            return false;
+          }
+          // Must not be empty after normalization
+          const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
+          if (!normalizedOpenEmail) {
+            return false;
+          }
+          // Must match exactly
+          return normalizedOpenEmail === normalizedRecipientEmail;
+        });
         
         const hasOpened = !!matchingOpen;
         
