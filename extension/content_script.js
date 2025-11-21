@@ -1463,6 +1463,24 @@ const handleSendClick = async event => {
     console.log('[MailTracker AI] Sender email extracted:', senderEmail);
   }
 
+  // CRITICAL FIX: Remove sender from recipients list using the FINAL senderEmail
+  // This handles cases where extractRecipients failed to filter it (because extractSender returned null)
+  if (senderEmail && senderEmail !== 'default') {
+    const normalizedSender = senderEmail.toLowerCase().trim();
+
+    // Helper to filter array
+    const filterSender = (arr) => {
+      if (!arr) return [];
+      return arr.filter(email => email.toLowerCase().trim() !== normalizedSender);
+    };
+
+    if (recipients.to) recipients.to = filterSender(recipients.to);
+    if (recipients.cc) recipients.cc = filterSender(recipients.cc);
+    if (recipients.bcc) recipients.bcc = filterSender(recipients.bcc);
+
+    console.log(`[MailTracker AI] 🧹 Performed final cleanup of sender (${senderEmail}) from recipients`);
+  }
+
   // Final check: Log what we extracted
   const totalRecipients = (recipients.to?.length || 0) +
     (recipients.cc?.length || 0) +
