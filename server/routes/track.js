@@ -182,10 +182,15 @@ router.get('/stats/:uid', async (req, res) => {
 
     const recipientStatus = allRecipients.map(email => {
       // Only mark as read if there's an actual open event with matching recipientEmail
-      const matchingOpen = opens.find(open => 
-        open.recipientEmail && 
-        normalizeEmail(open.recipientEmail) === normalizeEmail(email)
-      );
+      // Ensure recipientEmail exists, is not empty, and matches exactly
+      const matchingOpen = opens.find(open => {
+        if (!open.recipientEmail || typeof open.recipientEmail !== 'string') {
+          return false;
+        }
+        const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
+        const normalizedRecipientEmail = normalizeEmail(email);
+        return normalizedOpenEmail && normalizedRecipientEmail && normalizedOpenEmail === normalizedRecipientEmail;
+      });
       
       const hasOpened = !!matchingOpen;
       
@@ -264,10 +269,15 @@ router.get('/stats/user/:userId', async (req, res) => {
       
       const recipientStatus = allRecipients.map(email => {
         // Only mark as read if there's an actual open event with matching recipientEmail
-        const matchingOpen = messageOpens.find(open => 
-          open.recipientEmail && 
-          normalizeEmail(open.recipientEmail) === normalizeEmail(email)
-        );
+        // Ensure recipientEmail exists, is not empty, and matches exactly
+        const matchingOpen = messageOpens.find(open => {
+          if (!open.recipientEmail || typeof open.recipientEmail !== 'string') {
+            return false;
+          }
+          const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
+          const normalizedRecipientEmail = normalizeEmail(email);
+          return normalizedOpenEmail && normalizedRecipientEmail && normalizedOpenEmail === normalizedRecipientEmail;
+        });
         
         const hasOpened = !!matchingOpen;
         
