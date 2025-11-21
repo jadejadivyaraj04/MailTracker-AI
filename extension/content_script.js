@@ -1051,10 +1051,39 @@ class GmailRecipientExtractor {
       }
     }
 
+    // Final cleanup: Remove sender from ALL recipient lists
+    // This ensures the sender is never included as a recipient, especially in Bcc
+    if (senderEmail) {
+      const normalizedSender = senderEmail.toLowerCase().trim();
+
+      // Remove from To
+      if (bestResult.to) {
+        bestResult.to = bestResult.to.filter(email =>
+          email.toLowerCase().trim() !== normalizedSender
+        );
+      }
+
+      // Remove from Cc
+      if (bestResult.cc) {
+        bestResult.cc = bestResult.cc.filter(email =>
+          email.toLowerCase().trim() !== normalizedSender
+        );
+      }
+
+      // Remove from Bcc
+      if (bestResult.bcc) {
+        bestResult.bcc = bestResult.bcc.filter(email =>
+          email.toLowerCase().trim() !== normalizedSender
+        );
+      }
+
+      console.log(`[MailTracker AI] ✅ Final cleanup: Removed sender (${senderEmail}) from all recipient fields`);
+    }
+
     // Clean up empty fields
-    if (bestResult.to.length === 0) delete bestResult.to;
-    if (bestResult.cc.length === 0) delete bestResult.cc;
-    if (bestResult.bcc.length === 0) delete bestResult.bcc;
+    if (bestResult.to && bestResult.to.length === 0) delete bestResult.to;
+    if (bestResult.cc && bestResult.cc.length === 0) delete bestResult.cc;
+    if (bestResult.bcc && bestResult.bcc.length === 0) delete bestResult.bcc;
 
     console.log(`[MailTracker AI] === Final Result ===`, {
       to: bestResult.to?.length || 0,
