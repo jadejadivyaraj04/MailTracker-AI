@@ -18,15 +18,21 @@ function Dashboard({ userId, apiBase, onLogout }) {
       try {
         setLoading(true);
         setError('');
+        console.log('[Dashboard] Fetching stats from:', `${apiBase}/stats/user/${encodeURIComponent(userId)}`);
         const response = await fetch(`${apiBase}/stats/user/${encodeURIComponent(userId)}`);
+        
         if (!response.ok) {
-          throw new Error(`Failed to fetch stats: ${response.status}`);
+          const errorData = await response.json().catch(() => ({}));
+          console.error('[Dashboard] API error:', response.status, errorData);
+          throw new Error(errorData.error || `Failed to fetch stats: ${response.status}`);
         }
+        
         const payload = await response.json();
+        console.log('[Dashboard] Received stats:', payload);
         setStats(payload);
       } catch (err) {
-        console.error('Failed to load dashboard data', err);
-        setError('Unable to load analytics. Please verify the backend URL.');
+        console.error('[Dashboard] Failed to load dashboard data:', err);
+        setError(`Unable to load analytics: ${err.message}. Please verify the backend URL is correct.`);
       } finally {
         setLoading(false);
       }

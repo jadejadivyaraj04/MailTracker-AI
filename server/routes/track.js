@@ -322,10 +322,14 @@ router.get('/stats/user/:userId', async (req, res) => {
   const userId = decodeURIComponent(req.params.userId || 'default');
 
   try {
+    console.log('[MailTracker AI] Fetching stats for userId:', userId);
     const messages = await Message.find({ userId }).sort({ createdAt: -1 }).limit(200);
+    console.log('[MailTracker AI] Found messages:', messages.length);
+    
     const uids = messages.map(message => message.uid).filter(Boolean);
 
     if (!uids.length) {
+      console.log('[MailTracker AI] No messages found, returning empty stats');
       return res.json({
         userId,
         totalMessages: 0,
@@ -355,11 +359,12 @@ router.get('/stats/user/:userId', async (req, res) => {
       .lean();
 
     const summary = messages.map(message => {
-      const opens = openMap[message.uid];
-      const clicks = clickMap[message.uid];
+      try {
+        const opens = openMap[message.uid];
+        const clicks = clickMap[message.uid];
 
-      // Calculate recipient read status for this message (only for "To" recipients)
-      const toRecipients = (message.recipients.to || []).filter(Boolean);
+        // Calculate recipient read status for this message (only for "To" recipients)
+        const toRecipients = (message.recipients?.to || []).filter(Boolean);
 
       // Normalize email for comparison (lowercase, trim)
       const normalizeEmail = (email) => (email || '').toLowerCase().trim();
@@ -384,9 +389,11 @@ router.get('/stats/user/:userId', async (req, res) => {
 
         // Find exact match - but only count opens that happen AFTER the email was sent
         // This prevents sender previews from being counted as recipient opens
-        const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
+        const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : Date.now();
         const BUFFER_SECONDS = 30; // Buffer to prevent sender's own preview from counting
-        const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
+        const normalizedSenderEmail = (message.senderEmail && typeof message.senderEmail === 'string') 
+          ? normalizeEmail(message.senderEmail) 
+          : null;
 
         const matchingOpen = opensWithRecipient.find(open => {
           const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
@@ -424,21 +431,44 @@ router.get('/stats/user/:userId', async (req, res) => {
         };
       });
 
-      return {
-        uid: message.uid,
-        subject: message.subject,
-        sentAt: message.sentAt,
-        recipients: message.recipients,
-        openCount: opens?.count || 0,
-        clickCount: clicks?.count || 0,
-        lastOpenedAt: opens?.lastOpenedAt || null,
-        lastClickedAt: clicks?.lastClickedAt || null,
-        recipientStatus // New: per-recipient read status
-      };
+        return {
+          uid: message.uid,
+          subject: message.subject || '',
+          sentAt: message.sentAt,
+          recipients: message.recipients || { to: [], cc: [], bcc: [] },
+          openCount: opens?.count || 0,
+          clickCount: clicks?.count || 0,
+          lastOpenedAt: opens?.lastOpenedAt || null,
+          lastClickedAt: clicks?.lastClickedAt || null,
+          recipientStatus // New: per-recipient read status
+        };
+      } catch (msgError) {
+        console.error('[MailTracker AI] Error processing message:', message?.uid, msgError);
+        // Return a safe default for this message
+        return {
+          uid: message?.uid || 'unknown',
+          subject: message?.subject || '',
+          sentAt: message?.sentAt || new Date(),
+          recipients: message?.recipients || { to: [], cc: [], bcc: [] },
+          openCount: 0,
+          clickCount: 0,
+          lastOpenedAt: null,
+          lastClickedAt: null,
+          recipientStatus: []
+        };
+      }
     });
 
     const totalOpens = openAgg.reduce((acc, item) => acc + item.count, 0);
     const totalClicks = clickAgg.reduce((acc, item) => acc + item.count, 0);
+
+    console.log('[MailTracker AI] Returning stats:', {
+      userId,
+      totalMessages: messages.length,
+      totalOpens,
+      totalClicks,
+      summaryLength: summary.length
+    });
 
     return res.json({
       userId,
@@ -448,11 +478,16 @@ router.get('/stats/user/:userId', async (req, res) => {
       messages: summary
     });
   } catch (error) {
-    console.error('[MailTracker AI] user stats error', error);
+    console.error('[MailTracker AI] user stats error:', error);
     if (error?.stack) {
-      console.error(error.stack);
+      console.error('[MailTracker AI] Error stack:', error.stack);
     }
-    return res.status(500).json({ error: 'Failed to load user stats' });
+    // Always send a response, even on error
+    return res.status(500).json({ 
+      error: 'Failed to load user stats',
+      details: error.message,
+      userId: req.params.userId
+    });
   }
 });
 
