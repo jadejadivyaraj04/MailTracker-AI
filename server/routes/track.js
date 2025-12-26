@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import Message from '../models/Message.js';
 import OpenEvent from '../models/OpenEvent.js';
 import ClickEvent from '../models/ClickEvent.js';
+import { messageCache } from '../cache.js';
 
 const router = express.Router();
 
@@ -18,6 +19,18 @@ const getClientIp = req => {
     return forwarded.split(',')[0].trim();
   }
   return req.socket?.remoteAddress || '0.0.0.0';
+};
+
+const checkIfProxy = (userAgent = '') => {
+  const ua = userAgent.toLowerCase();
+  // Known email proxy indicators
+  return (
+    ua.includes('google-proxy-imagemessagely') ||
+    ua.includes('googleimageproxy') ||
+    ua.includes('outlooks-edge-content') ||
+    ua.includes('via ggpht.com') ||
+    ua.includes('apple-mail-canvas')
+  );
 };
 
 router.post('/register', async (req, res) => {
@@ -67,7 +80,7 @@ router.post('/register', async (req, res) => {
       recipientCount: allRecipients.length
     });
 
-    await Message.findOneAndUpdate(
+    const updatedMessage = await Message.findOneAndUpdate(
       { uid },
       {
         uid,
@@ -81,6 +94,9 @@ router.post('/register', async (req, res) => {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+
+    // Populate cache
+    messageCache.set(uid, updatedMessage);
 
     // Return recipientTokens to extension
     return res.json({ ok: true, recipientTokens });
@@ -123,7 +139,12 @@ router.get('/pixel', async (req, res) => {
     let recipientEmail = null;
 
     try {
-      const message = await Message.findOne({ uid });
+      // Check cache first
+      let message = messageCache.get(uid);
+      if (!message) {
+        message = await Message.findOne({ uid });
+        if (message) messageCache.set(uid, message);
+      }
 
       if (message && message.recipientTokens && token) {
         // Token-based identification (new method - most accurate)
@@ -166,16 +187,20 @@ router.get('/pixel', async (req, res) => {
     }
 
     // Create OpenEvent (with or without recipient identification)
+    const isProxy = checkIfProxy(userAgent);
+
     await OpenEvent.create({
       messageUid: uid,
       recipientEmail, // Will be null if token invalid or not provided
       ipHash: hashIp(ip, userAgent),
-      userAgent
+      userAgent,
+      isProxy
     });
 
     console.log('[MailTracker AI] OpenEvent created:', {
       messageUid: uid,
       recipientEmail,
+      isProxy,
       hasToken: !!token,
       tokenValid: !!recipientEmail
     });
@@ -264,7 +289,7 @@ router.get('/stats/:uid', async (req, res) => {
       // Find exact match - but only count opens that happen AFTER the email was sent
       // This prevents sender previews from being counted as recipient opens
       const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-      const BUFFER_SECONDS = 5; // Testing: 5s (increase to 30 for production)
+      const BUFFER_SECONDS = 30; // 30s buffer to filter sender previews
       const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
 
       const matchingOpen = opensWithRecipient.find(open => {
@@ -396,7 +421,7 @@ router.get('/stats/user/:userId', async (req, res) => {
           // Find exact match - but only count opens that happen AFTER the email was sent
           // This prevents sender previews from being counted as recipient opens
           const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : Date.now();
-          const BUFFER_SECONDS = 5; // Testing: 5s (increase to 30 for production)
+          const BUFFER_SECONDS = 30; // 30s buffer to filter sender previews
           const normalizedSenderEmail = (message.senderEmail && typeof message.senderEmail === 'string')
             ? normalizeEmail(message.senderEmail)
             : null;

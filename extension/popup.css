@@ -107,3 +107,65 @@ h1 {
   border-color: #1a73e8;
   box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.15);
 }
+
+.activity-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f3f4;
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-info {
+  display: flex;
+  flex-direction: column;
+  max-width: 180px;
+}
+
+.activity-subject {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-date {
+  font-size: 11px;
+  color: #5f6368;
+}
+
+.activity-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.badge-read {
+  background: #e6f4ea;
+  color: #1e8e3e;
+}
+
+.badge-unread {
+  background: #f1f3f4;
+  color: #5f6368;
+}
+
+.dashboard-link {
+  display: block;
+  text-align: center;
+  font-size: 12px;
+  color: #1a73e8;
+  text-decoration: none;
+  margin-top: 8px;
+  font-weight: 500;
+}
+
+.dashboard-link:hover {
+  text-decoration: underline;
+}

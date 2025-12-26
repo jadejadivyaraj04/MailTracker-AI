@@ -27,11 +27,60 @@ const initStorageSync = () => {
     if (area !== 'sync') return;
     if (changes.trackingEnabled) {
       trackingEnabled = changes.trackingEnabled.newValue;
+      // Update all visible toggles
+      document.querySelectorAll('.mt-ai-toggle-input').forEach(input => {
+        input.checked = trackingEnabled;
+      });
     }
     if (changes.userId) {
       userId = changes.userId.newValue || 'default';
     }
   });
+};
+
+/**
+ * Inject the tracking toggle into the Gmail Compose toolbar
+ */
+const injectComposeUI = (composeRoot) => {
+  if (!composeRoot) return;
+
+  // Find the toolbar area (usually where the "A" formatting and attachment icons are)
+  const toolbar = composeRoot.querySelector('.btC'); // Gmail's bottom toolbar container
+  if (!toolbar || toolbar.querySelector('.mt-ai-toolbar-integrated')) return;
+
+  const integrationWrapper = document.createElement('div');
+  integrationWrapper.className = 'mt-ai-toolbar-integrated';
+  integrationWrapper.style.cssText = 'display: inline-flex; align-items: center; margin-left: 12px; padding-left: 12px; border-left: 1px solid #dadce0; height: 36px;';
+
+  const toggleLabel = document.createElement('label');
+  toggleLabel.style.cssText = 'display: flex; align-items: center; cursor: pointer; user-select: none; gap: 8px;';
+
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = 'mt-ai-toggle-input';
+  checkbox.checked = trackingEnabled;
+  checkbox.style.cssText = 'cursor: pointer; width: 14px; height: 14px; margin: 0;';
+
+  checkbox.addEventListener('change', (e) => {
+    const isEnabled = e.target.checked;
+    chrome.storage.sync.set({ trackingEnabled: isEnabled });
+  });
+
+  const span = document.createElement('span');
+  span.textContent = 'Track Email';
+  span.style.cssText = 'font-size: 13px; color: #5f6368; font-weight: 500;';
+
+  toggleLabel.appendChild(checkbox);
+  toggleLabel.appendChild(span);
+  integrationWrapper.appendChild(toggleLabel);
+
+  // Insert before the formatting options or attachments
+  const firstChild = toolbar.firstChild;
+  if (firstChild) {
+    toolbar.insertBefore(integrationWrapper, firstChild);
+  } else {
+    toolbar.appendChild(integrationWrapper);
+  }
 };
 
 /**
@@ -1533,6 +1582,12 @@ const observeComposeUI = () => {
       seenButtons.add(button);
       button.addEventListener('click', handleSendClick, { capture: true });
     });
+
+    // Also inject the UI if we find a compose window
+    const composeRoot = recipientExtractor.findComposeRoot(root);
+    if (composeRoot) {
+      injectComposeUI(composeRoot);
+    }
   };
 
   const observer = new MutationObserver(mutations => {

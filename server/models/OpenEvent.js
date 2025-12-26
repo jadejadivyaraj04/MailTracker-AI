@@ -6,6 +6,7 @@ const openEventSchema = new mongoose.Schema(
     recipientEmail: { type: String, index: true }, // Track which recipient opened (for single-recipient emails)
     ipHash: { type: String, required: true },
     userAgent: { type: String },
+    isProxy: { type: Boolean, default: false },
     metadata: { type: mongoose.Schema.Types.Mixed }
   },
   { timestamps: { createdAt: true, updatedAt: false } }
