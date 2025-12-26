@@ -149,10 +149,19 @@ const checkIfProxy = (userAgent = '') => {
 
 router.post('/register', async (req, res) => {
   try {
-    const { uid, recipients = {}, subject = '', timestamp, userId = 'default', senderEmail, metadata = {} } = req.body || {};
+    let { uid, recipients = {}, subject = '', timestamp, userId = 'default', senderEmail, metadata = {} } = req.body || {};
 
     if (!uid) {
       return res.status(400).json({ error: 'uid is required' });
+    }
+
+    // SMART CATEGORIZATION: If userId is 'default' but we have a senderEmail, use senderEmail as userId.
+    // This handles cases where Chrome Sync is disabled.
+    if ((!userId || userId === 'default') && senderEmail) {
+      userId = senderEmail.toLowerCase().trim();
+      console.log(`[MailTracker AI] Fallback: Using senderEmail as userId for UID: ${uid}`);
+    } else if (userId) {
+      userId = userId.toLowerCase().trim();
     }
 
     const sentAt = timestamp ? new Date(timestamp) : new Date();
@@ -408,7 +417,7 @@ router.get('/stats/:uid', async (req, res) => {
 });
 
 router.get('/stats/user/:userId', async (req, res) => {
-  const userId = decodeURIComponent(req.params.userId || 'default');
+  const userId = decodeURIComponent(req.params.userId || 'default').toLowerCase().trim();
 
   try {
     console.log('[MailTracker AI] Fetching stats for userId:', userId);

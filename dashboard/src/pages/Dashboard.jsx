@@ -88,15 +88,25 @@ function Dashboard({ userId, apiBase, onLogout }) {
             <p className="mt-2 text-slate-500">Track and analyze your outreach engagement in real-time.</p>
           </div>
 
-          {stats?.messages?.length > 0 && (
+          <div className="flex gap-3">
             <button
-              onClick={() => exportToCSV(stats.messages)}
-              className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm border border-slate-200 transition hover:bg-slate-50 hover:shadow-md active:scale-95"
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-brand-600 shadow-sm border border-slate-200 transition hover:bg-slate-50 hover:shadow-md active:scale-95"
             >
-              <span className="text-lg">📊</span>
-              Download CSV
+              <span className="text-lg">🔄</span>
+              Refresh
             </button>
-          )}
+
+            {stats?.messages?.length > 0 && (
+              <button
+                onClick={() => exportToCSV(stats.messages)}
+                className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm border border-slate-200 transition hover:bg-slate-50 hover:shadow-md active:scale-95"
+              >
+                <span className="text-lg">📊</span>
+                Download CSV
+              </button>
+            )}
+          </div>
         </header>
 
         {loading ? (
