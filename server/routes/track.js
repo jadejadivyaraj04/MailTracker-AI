@@ -3,7 +3,32 @@ import crypto from 'crypto';
 import Message from '../models/Message.js';
 import OpenEvent from '../models/OpenEvent.js';
 import ClickEvent from '../models/ClickEvent.js';
-import { messageCache } from './cache.js';
+/**
+ * Simple In-Memory LRU Cache for message metadata
+ */
+class SimpleCache {
+  constructor(limit = 1000) {
+    this.limit = limit;
+    this.cache = new Map();
+  }
+  set(key, value) {
+    if (this.cache.size >= this.limit) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+    }
+    this.cache.set(key, value);
+  }
+  get(key) {
+    if (!this.cache.has(key)) return null;
+    const val = this.cache.get(key);
+    this.cache.delete(key);
+    this.cache.set(key, val);
+    return val;
+  }
+  delete(key) { this.cache.delete(key); }
+  clear() { this.cache.clear(); }
+}
+const messageCache = new SimpleCache(2000);
 
 const router = express.Router();
 

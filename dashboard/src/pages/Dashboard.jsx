@@ -2,7 +2,31 @@ import { useEffect, useMemo, useState } from 'react';
 import Navbar from '../components/Navbar.jsx';
 import EmailList from '../components/EmailList.jsx';
 import StatsChart from '../components/StatsChart.jsx';
-import { exportToCSV } from './csvExport.js';
+/**
+ * Utility to convert JSON data to CSV and trigger a download
+ */
+const exportToCSV = (messages, filename = 'mailtracker-report.csv') => {
+  if (!messages || !messages.length) return;
+  const headers = ['Subject', 'Sent At', 'Recipients (To)', 'Total Opens', 'Total Clicks', 'Status'];
+  const rows = messages.map(msg => [
+    `"${msg.subject.replace(/"/g, '""')}"`,
+    new Date(msg.sentAt).toLocaleString(),
+    `"${(msg.recipients?.to || []).join(', ').replace(/"/g, '""')}"`,
+    msg.openCount,
+    msg.clickCount,
+    msg.openCount > 0 ? 'Read' : 'Unread'
+  ]);
+  const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
 
 function Dashboard({ userId, apiBase, onLogout }) {
   const [loading, setLoading] = useState(true);
