@@ -75,23 +75,17 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     // Must have an identified recipient email at this point
     if (!openEmail) return false;
 
-    // Exclude opens where recipient is the sender (viewing own sent email)
-    // BUT allow it if it happens after the buffer (for testing purposes)
-    const isSender = normalizedSenderEmail && openEmail === normalizedSenderEmail;
+    // Smart Sender Exclusion:
+    // Exclude if it's the sender's email AND they are using the same IP as when they sent it
+    const isSenderEmail = normalizedSenderEmail && openEmail === normalizedSenderEmail;
+    const isSenderIp = message.metadata?.senderIpHash && open.ipHash === message.metadata.senderIpHash;
 
-    const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
-    const timeDiffSeconds = (openTime - sentAtTime) / 1000;
-
-    if (isSender && timeDiffSeconds < BUFFER_SECONDS) {
-      console.log(`[MailTracker AI] Skipping open: sender viewing own email within buffer (${timeDiffSeconds}s)`);
+    if (isSenderEmail && isSenderIp) {
+      console.log(`[MailTracker AI] Skipping open: confirmed sender self-open via Email+IP`);
       return false;
     }
 
-    if (timeDiffSeconds < BUFFER_SECONDS) {
-      console.log(`[MailTracker AI] Skipping open: too soon (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
-      return false;
-    }
-
+    // No timing buffer - if it's a valid identified recipient, count it immediately
     return true;
   });
 
@@ -195,17 +189,21 @@ router.post('/register', async (req, res) => {
       recipientCount: allRecipients.length
     });
 
+    const ip = getClientIp(req);
+    const userAgent = req.headers['user-agent'] || '';
+    const senderIpHash = hashIp(ip, userAgent);
+
     const updatedMessage = await Message.findOneAndUpdate(
       { uid },
       {
         uid,
         userId,
-        senderEmail: normalizedSenderEmail, // Store sender email
+        senderEmail: normalizedSenderEmail,
         subject,
         recipients: normalizedRecipients,
-        recipientTokens, // Store tokens in database
+        recipientTokens,
         sentAt,
-        metadata
+        metadata: { ...metadata, senderIpHash }
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
