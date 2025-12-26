@@ -46,6 +46,77 @@ const getClientIp = req => {
   return req.socket?.remoteAddress || '0.0.0.0';
 };
 
+const normalizeEmail = (email) => (email || '').toLowerCase().trim();
+
+/**
+ * Core logic to calculate validated metrics for a message
+ * Filters out sender opens, applies buffer, and handles lazy identification
+ */
+const validateMessageStats = (message, opens = [], clicks = []) => {
+  const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
+  const BUFFER_SECONDS = 5;
+  const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
+  const tokenMap = message.recipientTokens || {};
+  const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
+
+  // 1. Filter opens to get "Valid Human Recipient Opens"
+  const validOpens = opens.filter(open => {
+    // Determine the email for this open (stored or via token)
+    let openEmail = normalizeEmail(open.recipientEmail);
+
+    // Lazy Identification: If no email stored, try matching via token
+    if (!openEmail && open.token) {
+      const matchingEntry = Object.entries(tokens).find(([_, storedToken]) => storedToken === open.token);
+      if (matchingEntry) {
+        openEmail = normalizeEmail(matchingEntry[0]);
+      }
+    }
+
+    // Must have an identified recipient email at this point
+    if (!openEmail) return false;
+
+    // Filter out sender's own opens
+    if (normalizedSenderEmail && openEmail === normalizedSenderEmail) return false;
+
+    // Filter out "Too Soon" opens (buffer)
+    const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
+    const timeDiffSeconds = (openTime - sentAtTime) / 1000;
+    if (timeDiffSeconds < BUFFER_SECONDS) return false;
+
+    return true;
+  });
+
+  // 2. Map read status to specific recipients (To list)
+  const toRecipients = (message.recipients?.to || []).filter(Boolean);
+  const recipientStatus = toRecipients.map(email => {
+    const targetEmail = normalizeEmail(email);
+
+    // Find if ANY valid open belongs to this specific email
+    const openForThisUser = validOpens.find(open => {
+      const openEmail = normalizeEmail(open.recipientEmail);
+      if (openEmail === targetEmail) return true;
+
+      // Backup: check if token matches
+      const tokenForThisUser = tokens[email];
+      return tokenForThisUser && tokenForThisUser === open.token;
+    });
+
+    return {
+      email,
+      read: !!openForThisUser,
+      readAt: openForThisUser ? openForThisUser.createdAt : null
+    };
+  });
+
+  return {
+    openCount: validOpens.length,
+    clickCount: clicks.length, // Clicks are generally always valid
+    recipientStatus,
+    lastOpenedAt: validOpens.length > 0 ? validOpens[validOpens.length - 1].createdAt : null,
+    lastClickedAt: clicks.length > 0 ? clicks[clicks.length - 1].createdAt : null
+  };
+};
+
 const checkIfProxy = (userAgent = '') => {
   const ua = userAgent.toLowerCase();
   // Known email proxy indicators
@@ -217,7 +288,8 @@ router.get('/pixel', async (req, res) => {
 
     await OpenEvent.create({
       messageUid: uid,
-      recipientEmail, // Will be null if token invalid or not provided
+      recipientEmail, // Will be null if registration hasn't finished yet
+      token: token || null, // CRITICAL: Store token for lazy identification later
       ipHash: hashIp(ip, userAgent),
       userAgent,
       isProxy
@@ -290,75 +362,16 @@ router.get('/stats/:uid', async (req, res) => {
       ClickEvent.find({ messageUid: uid }).sort({ createdAt: 1 })
     ]);
 
-    // Calculate recipient read status (only for "To" recipients)
-    const toRecipients = (message.recipients.to || []).filter(Boolean);
+    // Use the validated stats helper for consistency
+    const validated = validateMessageStats(message, opens, clicks);
 
-    // Normalize email for comparison (lowercase, trim)
-    const normalizeEmail = (email) => (email || '').toLowerCase().trim();
-
-    const recipientStatus = toRecipients.map(email => {
-      // Only mark as read if there's an actual open event with matching recipientEmail
-      // Strict validation: recipientEmail must be a non-empty string and match exactly
-      const normalizedRecipientEmail = normalizeEmail(email);
-
-      // Default to false - only set to true if we find a confirmed match
-      let hasOpened = false;
-      let readAt = null;
-
-      // Only check opens that have a recipientEmail (skip null/undefined)
-      const opensWithRecipient = opens.filter(open =>
-        open.recipientEmail &&
-        typeof open.recipientEmail === 'string' &&
-        open.recipientEmail.trim().length > 0
-      );
-
-      // Find exact match - but only count opens that happen AFTER the email was sent
-      // This prevents sender previews from being counted as recipient opens
-      const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-      const BUFFER_SECONDS = 5; // 5s buffer for testing
-      const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
-
-      const matchingOpen = opensWithRecipient.find(open => {
-        const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
-        const emailMatches = normalizedOpenEmail &&
-          normalizedOpenEmail === normalizedRecipientEmail;
-
-        if (!emailMatches) {
-          return false;
-        }
-
-        // Exclude opens where recipient is the sender (viewing own sent email)
-        if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
-          console.log('[MailTracker AI] Excluding sender open:', normalizedOpenEmail);
-          return false;
-        }
-
-        // Only count opens that happen after the email was sent (with buffer)
-        const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
-        const timeDiffSeconds = (openTime - sentAtTime) / 1000;
-
-        // Open must happen at least BUFFER_SECONDS after send time
-        // Using 5 seconds for testing (increase to 30 for production)
-        if (timeDiffSeconds < BUFFER_SECONDS) {
-          console.log(`[MailTracker AI] Excluding open (too soon): ${timeDiffSeconds}s < ${BUFFER_SECONDS}s`);
-          return false;
-        }
-
-        return true;
-      });
-
-      // Only set to true if we have a confirmed match that happened after sending
-      if (matchingOpen) {
-        hasOpened = true;
-        readAt = matchingOpen.createdAt;
-      }
-
-      // Explicitly return false if no match found
-      return {
-        email,
-        read: hasOpened === true, // Explicitly ensure boolean true
-        readAt: readAt
-      };
+    return res.json({
+      message,
+      openCount: validated.openCount,
+      clickCount: validated.clickCount,
+      opens: opens, // Return raw for transparency
+      clicks: clicks,
+      recipientStatus: validated.recipientStatus
     });
 
     return res.json({
@@ -396,118 +409,30 @@ router.get('/stats/user/:userId', async (req, res) => {
       });
     }
 
-    const [openAgg, clickAgg] = await Promise.all([
-      OpenEvent.aggregate([
-        { $match: { messageUid: { $in: uids } } },
-        { $group: { _id: '$messageUid', count: { $sum: 1 }, lastOpenedAt: { $max: '$createdAt' } } }
-      ]),
-      ClickEvent.aggregate([
-        { $match: { messageUid: { $in: uids } } },
-        { $group: { _id: '$messageUid', count: { $sum: 1 }, lastClickedAt: { $max: '$createdAt' } } }
-      ])
-    ]);
-
-    const openMap = Object.fromEntries(openAgg.map(item => [item._id, item]));
-    const clickMap = Object.fromEntries(clickAgg.map(item => [item._id, item]));
-
-    // Get detailed opens for recipient status
-    const detailedOpens = await OpenEvent.find({ messageUid: { $in: uids } })
-      .select('messageUid recipientEmail createdAt')
-      .lean();
+    const detailedOpens = await OpenEvent.find({ messageUid: { $in: uids } }).lean();
+    const detailedClicks = await ClickEvent.find({ messageUid: { $in: uids } }).lean();
 
     const summary = messages.map(message => {
       try {
-        const opens = openMap[message.uid];
-        const clicks = clickMap[message.uid];
+        const messageOpens = detailedOpens.filter(o => o.messageUid === message.uid);
+        const messageClicks = detailedClicks.filter(c => c.messageUid === message.uid);
 
-        // Calculate recipient read status for this message (only for "To" recipients)
-        const toRecipients = (message.recipients?.to || []).filter(Boolean);
-
-        // Normalize email for comparison (lowercase, trim)
-        const normalizeEmail = (email) => (email || '').toLowerCase().trim();
-
-        const messageOpens = detailedOpens.filter(open => open.messageUid === message.uid);
-
-        const recipientStatus = toRecipients.map(email => {
-          // Only mark as read if there's an actual open event with matching recipientEmail
-          // Strict validation: recipientEmail must be a non-empty string and match exactly
-          const normalizedRecipientEmail = normalizeEmail(email);
-
-          // Default to false - only set to true if we find a confirmed match
-          let hasOpened = false;
-          let readAt = null;
-
-          // Only check opens that have a recipientEmail (skip null/undefined)
-          const opensWithRecipient = messageOpens.filter(open =>
-            open.recipientEmail &&
-            typeof open.recipientEmail === 'string' &&
-            open.recipientEmail.trim().length > 0
-          );
-
-          // Find exact match - but only count opens that happen AFTER the email was sent
-          // This prevents sender previews from being counted as recipient opens
-          const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : Date.now();
-          const BUFFER_SECONDS = 5; // 5s buffer for testing
-          const normalizedSenderEmail = (message.senderEmail && typeof message.senderEmail === 'string')
-            ? normalizeEmail(message.senderEmail)
-            : null;
-
-          const matchingOpen = opensWithRecipient.find(open => {
-            const normalizedOpenEmail = normalizeEmail(open.recipientEmail);
-            const emailMatches = normalizedOpenEmail &&
-              normalizedOpenEmail === normalizedRecipientEmail;
-
-            if (!emailMatches) {
-              return false;
-            }
-
-            // Exclude opens where recipient is the sender (viewing own sent email)
-            if (normalizedSenderEmail && normalizedOpenEmail === normalizedSenderEmail) {
-              console.log('[MailTracker AI] Excluding sender open:', normalizedOpenEmail);
-              return false;
-            }
-
-            // Only count opens that happen after the email was sent (with buffer)
-            const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
-            const timeDiffSeconds = (openTime - sentAtTime) / 1000;
-
-            // Open must happen at least BUFFER_SECONDS after send time
-            if (timeDiffSeconds < BUFFER_SECONDS) {
-              console.log(`[MailTracker AI] Excluding open (too soon): ${timeDiffSeconds}s < ${BUFFER_SECONDS}s`);
-              return false;
-            }
-
-            return true;
-          });
-
-          // Only set to true if we have a confirmed match that happened after sending
-          if (matchingOpen) {
-            hasOpened = true;
-            readAt = matchingOpen.createdAt;
-          }
-
-          // Explicitly return false if no match found
-          return {
-            email,
-            read: hasOpened === true, // Explicitly ensure boolean true
-            readAt: readAt
-          };
-        });
+        // Use the common validated stats helper
+        const validated = validateMessageStats(message, messageOpens, messageClicks);
 
         return {
           uid: message.uid,
           subject: message.subject || '',
           sentAt: message.sentAt,
           recipients: message.recipients || { to: [], cc: [], bcc: [] },
-          openCount: opens?.count || 0,
-          clickCount: clicks?.count || 0,
-          lastOpenedAt: opens?.lastOpenedAt || null,
-          lastClickedAt: clicks?.lastClickedAt || null,
-          recipientStatus // New: per-recipient read status
+          openCount: validated.openCount,
+          clickCount: validated.clickCount,
+          lastOpenedAt: validated.lastOpenedAt,
+          lastClickedAt: validated.lastClickedAt,
+          recipientStatus: validated.recipientStatus
         };
       } catch (msgError) {
         console.error('[MailTracker AI] Error processing message:', message?.uid, msgError);
-        // Return a safe default for this message
         return {
           uid: message?.uid || 'unknown',
           subject: message?.subject || '',
@@ -522,8 +447,8 @@ router.get('/stats/user/:userId', async (req, res) => {
       }
     });
 
-    const totalOpens = openAgg.reduce((acc, item) => acc + item.count, 0);
-    const totalClicks = clickAgg.reduce((acc, item) => acc + item.count, 0);
+    const totalOpens = summary.reduce((acc, m) => acc + m.openCount, 0);
+    const totalClicks = summary.reduce((acc, m) => acc + m.clickCount, 0);
 
     console.log('[MailTracker AI] Returning stats:', {
       userId,
