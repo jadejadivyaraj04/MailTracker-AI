@@ -75,28 +75,23 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     // Must have an identified recipient email at this point
     if (!openEmail) return false;
 
-    // Smart Sender/Self-Open Protection:
-    const isSenderIp = message.metadata?.senderIpHash && open.ipHash === message.metadata.senderIpHash;
+    // Exclude opens where recipient is the sender (viewing own sent email)
+    // BUT allow it if it happens after the buffer (for testing purposes)
+    const isSender = normalizedSenderEmail && openEmail === normalizedSenderEmail;
+
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    // If it's coming from the sender's IP, we are VERY suspicious.
-    if (isSenderIp) {
-      // If it's within 10 seconds, it is almost certainly the sender's browser loading the sent box.
-      if (timeDiffSeconds < 10) {
-        console.log(`[MailTracker AI] Skipping open: detected sender self-trigger within 10s window (${timeDiffSeconds}s)`);
-        return false;
-      }
-
-      // If it's the sender's IP AND the sender's email, it's a self-open (ignore)
-      const isSenderEmail = normalizedSenderEmail && openEmail === normalizedSenderEmail;
-      if (isSenderEmail) {
-        console.log(`[MailTracker AI] Skipping open: confirmed sender self-view (Email+IP)`);
-        return false;
-      }
+    if (isSender && timeDiffSeconds < BUFFER_SECONDS) {
+      console.log(`[MailTracker AI] Skipping open: sender viewing own email within buffer (${timeDiffSeconds}s)`);
+      return false;
     }
 
-    // No buffer for proxies or other IPs - if it's a valid identified recipient, count it!
+    if (timeDiffSeconds < BUFFER_SECONDS) {
+      console.log(`[MailTracker AI] Skipping open: too soon (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
+      return false;
+    }
+
     return true;
   });
 
@@ -200,21 +195,17 @@ router.post('/register', async (req, res) => {
       recipientCount: allRecipients.length
     });
 
-    const ip = getClientIp(req);
-    const userAgent = req.headers['user-agent'] || '';
-    const senderIpHash = hashIp(ip, userAgent);
-
     const updatedMessage = await Message.findOneAndUpdate(
       { uid },
       {
         uid,
         userId,
-        senderEmail: normalizedSenderEmail,
+        senderEmail: normalizedSenderEmail, // Store sender email
         subject,
         recipients: normalizedRecipients,
-        recipientTokens,
+        recipientTokens, // Store tokens in database
         sentAt,
-        metadata: { ...metadata, senderIpHash }
+        metadata
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
