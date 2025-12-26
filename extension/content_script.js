@@ -17,6 +17,10 @@ const generateUUID = () => {
 /**
  * Fetch current tracking preferences from storage and keep them in sync
  */
+const generateToken = () => {
+  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+};
+
 const initStorageSync = () => {
   chrome.storage.sync.get({ trackingEnabled: true, userId: 'default' }, ({ trackingEnabled: storedTracking, userId: storedUserId }) => {
     trackingEnabled = storedTracking;
@@ -1554,16 +1558,36 @@ const handleSendClick = async event => {
     console.log(`[MailTracker AI] ✅ Successfully extracted ${totalRecipients} recipient(s) before send`);
   }
 
-  // Register message first to get recipient tokens
-  const recipientTokens = await registerMessage({ uid, recipients, subject, senderEmail });
+  // INSTANT INJECTION (ZERO LATENCY)
+  // We generate local tokens and inject the pixel BEFORE the register fetch
+  // to ensure Gmail sends the email with the pixel even if registration is slow.
+  const recipientTokens = {};
+  const allEmails = [
+    ...(recipients.to || []),
+    ...(recipients.cc || []),
+    ...(recipients.bcc || [])
+  ];
 
-  // Add tracking pixels with recipient tokens (if available)
+  allEmails.forEach(email => {
+    recipientTokens[email] = generateToken();
+  });
+
   if (bodyEl) {
     appendTrackingPixel(bodyEl, uid, recipientTokens);
     rewriteLinks(bodyEl, uid);
+    console.log('[MailTracker AI] 🚀 Instant pixel injection completed');
   } else {
     console.warn('[MailTracker AI] ⚠️ Cannot add tracking pixel - body element not found');
   }
+
+  // Register in background - don't await it to block Gmail's send process
+  registerMessage({
+    uid,
+    recipients,
+    subject,
+    senderEmail,
+    recipientTokens // Send our locally generated tokens to the server
+  }).catch(err => console.error('[MailTracker AI] Post-send registration failed:', err));
 
   console.log('[MailTracker AI] ============================================');
 };

@@ -123,6 +123,17 @@ function Dashboard({ userId, apiBase, onLogout }) {
           </div>
         ) : stats ? (
           <div className="space-y-10">
+            {stats.totalMessages === 0 && (
+              <div className="rounded-2xl border border-amber-100 bg-amber-50/50 p-6 text-amber-700 backdrop-blur-sm">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">💡</span>
+                  <div>
+                    <p className="font-semibold">No emails found for "{userId}"</p>
+                    <p className="text-sm">Ensure this is the same email address appearing in your Gmail/Extension settings.</p>
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Stats Grid */}
             <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               <article className="group relative overflow-hidden rounded-2xl bg-white p-6 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] transition-all hover:shadow-xl">

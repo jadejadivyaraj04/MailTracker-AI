@@ -82,8 +82,8 @@ router.post('/register', async (req, res) => {
     // Normalize sender email
     const normalizedSenderEmail = senderEmail ? senderEmail.toLowerCase().trim() : null;
 
-    // Generate unique token for each recipient (To, Cc, Bcc)
-    const recipientTokens = {};
+    // Use tokens provided by client or generate if missing
+    const recipientTokens = req.body.recipientTokens || {};
     const allRecipients = [
       ...normalizedRecipients.to,
       ...normalizedRecipients.cc,
@@ -91,9 +91,10 @@ router.post('/register', async (req, res) => {
     ];
 
     allRecipients.forEach(email => {
-      // Generate a unique token for each recipient
-      const token = crypto.randomBytes(16).toString('hex');
-      recipientTokens[email] = token;
+      // Only generate if client didn't provide one
+      if (!recipientTokens[email]) {
+        recipientTokens[email] = crypto.randomBytes(16).toString('hex');
+      }
     });
 
     console.log('[MailTracker AI] Registering message:', {
@@ -314,7 +315,7 @@ router.get('/stats/:uid', async (req, res) => {
       // Find exact match - but only count opens that happen AFTER the email was sent
       // This prevents sender previews from being counted as recipient opens
       const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-      const BUFFER_SECONDS = 30; // 30s buffer to filter sender previews
+      const BUFFER_SECONDS = 5; // 5s buffer for testing
       const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
 
       const matchingOpen = opensWithRecipient.find(open => {
@@ -446,7 +447,7 @@ router.get('/stats/user/:userId', async (req, res) => {
           // Find exact match - but only count opens that happen AFTER the email was sent
           // This prevents sender previews from being counted as recipient opens
           const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : Date.now();
-          const BUFFER_SECONDS = 30; // 30s buffer to filter sender previews
+          const BUFFER_SECONDS = 5; // 5s buffer for testing
           const normalizedSenderEmail = (message.senderEmail && typeof message.senderEmail === 'string')
             ? normalizeEmail(message.senderEmail)
             : null;
