@@ -1365,14 +1365,15 @@ const rewriteLinks = (bodyEl, uid) => {
  * Send metadata about the outgoing email to the backend
  * Returns recipientTokens if available
  */
-const registerMessage = async ({ uid, recipients, subject, senderEmail }) => {
+const registerMessage = async ({ uid, recipients, subject, senderEmail, recipientTokens }) => {
   // Debug logging
   console.log('[MailTracker AI] Registering message:', {
     uid,
     subject,
     recipients,
     senderEmail,
-    userId
+    userId,
+    recipientTokens
   });
 
   try {
@@ -1383,7 +1384,8 @@ const registerMessage = async ({ uid, recipients, subject, senderEmail }) => {
         uid,
         recipients,
         subject,
-        senderEmail, // Include sender email
+        senderEmail,
+        recipientTokens, // CRITICAL: Send local tokens to backend
         timestamp: new Date().toISOString(),
         userId
       })
