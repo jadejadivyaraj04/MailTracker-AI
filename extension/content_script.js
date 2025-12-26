@@ -1366,13 +1366,24 @@ const rewriteLinks = (bodyEl, uid) => {
  * Returns recipientTokens if available
  */
 const registerMessage = async ({ uid, recipients, subject, senderEmail, recipientTokens }) => {
+  // Ensure we have the latest userId from storage if currently default
+  let activeUserId = userId;
+  if (!activeUserId || activeUserId === 'default') {
+    try {
+      const stored = await chrome.storage.sync.get(['userId']);
+      if (stored.userId) activeUserId = stored.userId;
+    } catch (e) {
+      console.warn('[MailTracker AI] Could not refresh userId from storage');
+    }
+  }
+
   // Debug logging
   console.log('[MailTracker AI] Registering message:', {
     uid,
     subject,
     recipients,
     senderEmail,
-    userId,
+    userId: activeUserId,
     recipientTokens
   });
 
@@ -1385,9 +1396,9 @@ const registerMessage = async ({ uid, recipients, subject, senderEmail, recipien
         recipients,
         subject,
         senderEmail,
-        recipientTokens, // CRITICAL: Send local tokens to backend
+        recipientTokens,
         timestamp: new Date().toISOString(),
-        userId
+        userId: activeUserId
       })
     });
 
@@ -1450,148 +1461,113 @@ const extractRecipientsWithRetry = async (composeRoot, maxRetries = 3, delay = 1
 /**
  * Handle click on Gmail send buttons and wire up tracking
  */
-const handleSendClick = async event => {
-  if (!trackingEnabled) {
-    return; // user disabled tracking via popup toggle
-  }
+/**
+ * Core orchestrator for tracking an outgoing email.
+ * This function performs SYNCHRONOUS injection to ensure the pixel 
+ * is included before Gmail's send process clears the DOM.
+ */
+const handleBaseSend = (composeRoot, source = 'click') => {
+  if (!trackingEnabled) return;
 
-  console.log('[MailTracker AI] ============================================');
-  console.log('[MailTracker AI] Send button clicked - Starting extraction');
-  console.log('[MailTracker AI] ============================================');
-
-  const button = event.currentTarget;
-
-  // Try multiple ways to find compose root
-  let composeRoot = button.closest('div[role="dialog"]') ||
-    button.closest('td.Bu') ||
-    button.closest('[role="dialog"]') ||
-    document.querySelector('[role="dialog"]') ||
-    document.querySelector('.M9') ||
-    document.querySelector('td.Bu');
-
-  if (!composeRoot) {
-    console.error('[MailTracker AI] ❌ Compose root not found!');
-    console.error('[MailTracker AI] Button element:', button);
-    console.error('[MailTracker AI] Trying to find compose window...');
-
-    // Last resort: find any dialog
-    composeRoot = document.querySelector('[role="dialog"]');
-    if (!composeRoot) {
-      console.error('[MailTracker AI] ❌ No compose window found at all!');
-      return;
-    }
-  }
-
-  console.log('[MailTracker AI] ✅ Found compose root:', composeRoot);
+  console.log(`[MailTracker AI] Send triggered via ${source}`);
 
   const bodyEl = composeRoot.querySelector('div[aria-label="Message Body"], div.editable, div[contenteditable="true"]');
   const subjectInput = composeRoot.querySelector('input[name="subjectbox"], input[aria-label*="Subject" i]');
 
   if (!bodyEl) {
-    console.warn('[MailTracker AI] ⚠️ Message body not found, but continuing...');
-    // Don't return - we can still track even without body
+    console.warn('[MailTracker AI] Message body not found, skipping tracking injection');
+    return;
   }
 
   const uid = generateUUID();
-  console.log('[MailTracker AI] Generated UID:', uid);
-
-  // Extract recipients with retry mechanism to ensure we get all of them
-  // Add a small delay to ensure Gmail has finished rendering
-  console.log('[MailTracker AI] Waiting 100ms for DOM to settle...');
-  await new Promise(resolve => setTimeout(resolve, 100));
-
-  console.log('[MailTracker AI] Starting recipient extraction...');
-  const recipients = await extractRecipientsWithRetry(composeRoot, 5, 250); // More retries, longer delay
   const subject = subjectInput ? subjectInput.value : '';
 
-  // Extract sender email to exclude sender's own opens
-  // First try to extract from DOM
-  let senderEmail = recipientExtractor.extractSender(composeRoot);
-
-  // If extraction failed, use the stored userId as sender email
-  // (userId should be set to the user's email address)
-  if (!senderEmail) {
-    const stored = await chrome.storage.sync.get(['userId']);
-    senderEmail = stored.userId || 'default';
-    console.log('[MailTracker AI] Sender extraction failed, using userId:', senderEmail);
-  } else {
-    console.log('[MailTracker AI] Sender email extracted:', senderEmail);
-  }
-
-  // CRITICAL FIX: Remove sender from recipients list using the FINAL senderEmail
-  // This handles cases where extractRecipients failed to filter it (because extractSender returned null)
-  if (senderEmail && senderEmail !== 'default') {
-    const normalizedSender = senderEmail.toLowerCase().trim();
-
-    // Helper to filter array
-    const filterSender = (arr) => {
-      if (!arr) return [];
-      return arr.filter(email => email.toLowerCase().trim() !== normalizedSender);
-    };
-
-    if (recipients.to) recipients.to = filterSender(recipients.to);
-    if (recipients.cc) recipients.cc = filterSender(recipients.cc);
-    if (recipients.bcc) recipients.bcc = filterSender(recipients.bcc);
-
-    console.log(`[MailTracker AI] 🧹 Performed final cleanup of sender (${senderEmail}) from recipients`);
-  }
-
-  // Final check: Log what we extracted
-  const totalRecipients = (recipients.to?.length || 0) +
-    (recipients.cc?.length || 0) +
-    (recipients.bcc?.length || 0);
-
-  console.log('[MailTracker AI] ============================================');
-  console.log('[MailTracker AI] Extraction Summary:');
-  console.log('[MailTracker AI]   Sender:', senderEmail || 'Not detected');
-  console.log('[MailTracker AI]   To:', recipients.to?.length || 0, recipients.to || []);
-  console.log('[MailTracker AI]   CC:', recipients.cc?.length || 0, recipients.cc || []);
-  console.log('[MailTracker AI]   BCC:', recipients.bcc?.length || 0, recipients.bcc || []);
-  console.log('[MailTracker AI]   Total:', totalRecipients);
-  console.log('[MailTracker AI] ============================================');
-
-  if (totalRecipients === 0) {
-    console.warn('[MailTracker AI] ⚠️ No recipients found! This might indicate an extraction issue.');
-    console.warn('[MailTracker AI] Debug: Run debugExtractRecipients() in console to investigate');
-
-    // Still continue - we'll add a tracking pixel without recipient tokens
-    // This allows basic tracking to work even if extraction fails
-  } else {
-    console.log(`[MailTracker AI] ✅ Successfully extracted ${totalRecipients} recipient(s) before send`);
-  }
-
-  // INSTANT INJECTION (ZERO LATENCY)
-  // We generate local tokens and inject the pixel BEFORE the register fetch
-  // to ensure Gmail sends the email with the pixel even if registration is slow.
+  // 1. FAST SYNCHRONOUS EXTRACTION & INJECTION
+  // Get whatever recipients are currently visible in the DOM without waiting
+  const fastRecipients = extractRecipients(composeRoot);
   const recipientTokens = {};
-  const allEmails = [
-    ...(recipients.to || []),
-    ...(recipients.cc || []),
-    ...(recipients.bcc || [])
+  const allInitial = [
+    ...(fastRecipients.to || []),
+    ...(fastRecipients.cc || []),
+    ...(fastRecipients.bcc || [])
   ];
 
-  allEmails.forEach(email => {
+  allInitial.forEach(email => {
     recipientTokens[email] = generateToken();
   });
 
-  if (bodyEl) {
-    appendTrackingPixel(bodyEl, uid, recipientTokens);
-    rewriteLinks(bodyEl, uid);
-    console.log('[MailTracker AI] 🚀 Instant pixel injection completed');
-  } else {
-    console.warn('[MailTracker AI] ⚠️ Cannot add tracking pixel - body element not found');
+  // Inject the pixel and rewrite links IMMEDIATELY
+  appendTrackingPixel(bodyEl, uid, recipientTokens);
+  rewriteLinks(bodyEl, uid);
+  console.log('[MailTracker AI] ✅ Synchronous injection completed for UID:', uid);
+
+  // 2. ASYNC REGISTRATION & REFINEMENT
+  // Since we've already modified the body, we can take our time to 
+  // do a more thorough recipient extraction and register with the server.
+  (async () => {
+    try {
+      // Small delay to let any final Gmail chip animations finish
+      await new Promise(r => setTimeout(r, 150));
+
+      const refinedRecipients = await extractRecipientsWithRetry(composeRoot, 3, 100);
+      let senderEmail = recipientExtractor.extractSender(composeRoot);
+
+      if (!senderEmail) {
+        const stored = await chrome.storage.sync.get(['userId']);
+        senderEmail = stored.userId || userId || 'default';
+      }
+
+      // Merge tokens (in case refined extraction found more people)
+      const finalTokens = { ...recipientTokens };
+      const allRefined = [
+        ...(refinedRecipients.to || []),
+        ...(refinedRecipients.cc || []),
+        ...(refinedRecipients.bcc || [])
+      ];
+
+      allRefined.forEach(email => {
+        if (!finalTokens[email]) finalTokens[email] = generateToken();
+      });
+
+      await registerMessage({
+        uid,
+        recipients: refinedRecipients,
+        subject,
+        senderEmail,
+        recipientTokens: finalTokens
+      });
+      console.log('[MailTracker AI] ✅ Background registration completed for UID:', uid);
+    } catch (bgError) {
+      console.error('[MailTracker AI] Background registration error:', bgError);
+    }
+  })();
+};
+
+/**
+ * Handle click on Gmail send buttons
+ */
+const handleSendClick = event => {
+  const button = event.currentTarget;
+  const composeRoot = recipientExtractor.findComposeRoot(button);
+
+  if (composeRoot) {
+    handleBaseSend(composeRoot, 'button-click');
   }
+};
 
-  // Register in background - don't await it to block Gmail's send process
-  registerMessage({
-    uid,
-    recipients,
-    subject,
-    senderEmail,
-    recipientTokens // Send our locally generated tokens to the server
-  }).catch(err => console.error('[MailTracker AI] Post-send registration failed:', err));
+/**
+ * Handle Gmail Send Shortcuts (Cmd+Enter, Ctrl+Enter)
+ */
+const handleGlobalKeydown = event => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    // Check if we are inside a compose window
+    const target = event.target;
+    const composeRoot = recipientExtractor.findComposeRoot(target);
 
-  console.log('[MailTracker AI] ============================================');
+    if (composeRoot) {
+      handleBaseSend(composeRoot, 'keyboard-shortcut');
+    }
+  }
 };
 
 /**
@@ -1638,6 +1614,8 @@ const observeComposeUI = () => {
 const bootstrap = () => {
   initStorageSync();
   observeComposeUI();
+  // Add global keyboard shortcut listener
+  document.addEventListener('keydown', handleGlobalKeydown, { capture: true });
 };
 
 document.addEventListener('DOMContentLoaded', bootstrap);
