@@ -1275,10 +1275,10 @@ const appendTrackingPixel = (bodyEl, uid, recipientTokens = null) => {
       }
 
       const pixelImg = document.createElement('img');
-      pixelImg.src = pixelUrl;
+      pixelImg.src = `${pixelUrl}&_t=${Date.now()}`;
       pixelImg.width = 1;
       pixelImg.height = 1;
-      pixelImg.style.display = 'none';
+      pixelImg.style.cssText = 'opacity: 0; position: absolute; left: -9999px; width: 1px; height: 1px;';
       pixelImg.alt = '';
       pixelImg.setAttribute('data-recipient', email); // For debugging
 
@@ -1295,10 +1295,10 @@ const appendTrackingPixel = (bodyEl, uid, recipientTokens = null) => {
     }
 
     const pixelImg = document.createElement('img');
-    pixelImg.src = pixelUrl;
+    pixelImg.src = `${pixelUrl}&_t=${Date.now()}`;
     pixelImg.width = 1;
     pixelImg.height = 1;
-    pixelImg.style.display = 'none';
+    pixelImg.style.cssText = 'opacity: 0; position: absolute; left: -9999px; width: 1px; height: 1px;';
     pixelImg.alt = '';
 
     bodyEl.appendChild(pixelImg);

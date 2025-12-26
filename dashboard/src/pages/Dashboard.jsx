@@ -34,38 +34,32 @@ function Dashboard({ userId, apiBase, onLogout }) {
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
-    const fetchStats = async () => {
+    let timer;
+    const fetchStats = async (isSilent = false) => {
       if (!apiBase) {
         setError('API base URL not configured.');
         return;
       }
-
       try {
-        setLoading(true);
-        setError('');
-        console.log('[Dashboard] Fetching stats from:', `${apiBase}/stats/user/${encodeURIComponent(userId)}`);
+        if (!isSilent) setLoading(true);
         const response = await fetch(`${apiBase}/stats/user/${encodeURIComponent(userId)}`);
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          console.error('[Dashboard] API error:', response.status, errorData);
-          throw new Error(errorData.error || `Failed to fetch stats: ${response.status}`);
-        }
-
+        if (!response.ok) throw new Error('Failed to fetch data');
         const payload = await response.json();
-        console.log('[Dashboard] Received stats:', payload);
         setStats(payload);
+        setError('');
       } catch (err) {
-        console.error('[Dashboard] Failed to load dashboard data:', err);
-        setError(`Unable to load analytics: ${err.message}. Please verify the backend URL is correct.`);
+        console.error('[Dashboard] Error:', err);
+        if (!isSilent) setError('Unable to load analytics.');
       } finally {
-        setLoading(false);
+        if (!isSilent) setLoading(false);
       }
     };
 
     if (userId) {
       fetchStats();
+      timer = setInterval(() => fetchStats(true), 30000);
     }
+    return () => clearInterval(timer);
   }, [apiBase, userId]);
 
   const chartData = useMemo(() => {

@@ -40,7 +40,7 @@ function EmailList({ messages = [] }) {
       {messages.map(message => {
         const toRecipients = message.recipients?.to || [];
         const recipientStatus = message.recipientStatus || [];
-        
+
         // Create a map of email to read status for quick lookup
         const statusMap = new Map();
         recipientStatus.forEach(status => {
@@ -55,11 +55,19 @@ function EmailList({ messages = [] }) {
                 <h3 className="text-lg font-semibold text-slate-900 mb-1 truncate">
                   {message.subject || 'Untitled email'}
                 </h3>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-slate-500 flex items-center gap-2">
                   Sent {formatDateTime(message.sentAt)}
+                  <a
+                    href={`https://mailtracker-ai.onrender.com/debug/track/${message.uid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-brand-400 hover:text-brand-600 underline"
+                  >
+                    (Debug Data)
+                  </a>
                 </p>
               </div>
-              
+
               {/* Stats badges */}
               <div className="flex gap-3 shrink-0">
                 <div className="text-center">
@@ -79,29 +87,28 @@ function EmailList({ messages = [] }) {
                 {toRecipients.map((email, idx) => {
                   const normalizedEmail = email.toLowerCase().trim();
                   const status = statusMap.get(normalizedEmail);
-                  
+
                   // STRICT CHECK: Only show as read if:
                   // 1. Status object exists
                   // 2. read property exists and is explicitly true (boolean)
                   // Default to false if status is missing or read is not explicitly true
                   let isRead = false;
-                  
-                  if (status && 
-                      typeof status === 'object' && 
-                      status.hasOwnProperty('read') && 
-                      status.read === true && 
-                      typeof status.read === 'boolean') {
+
+                  if (status &&
+                    typeof status === 'object' &&
+                    status.hasOwnProperty('read') &&
+                    status.read === true &&
+                    typeof status.read === 'boolean') {
                     isRead = true;
                   }
-                  
+
                   return (
                     <div
                       key={idx}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg ${
-                        isRead
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg ${isRead
                           ? 'bg-emerald-50 border border-emerald-200'
                           : 'bg-slate-50 border border-slate-200'
-                      }`}
+                        }`}
                     >
                       <span className={`w-2 h-2 rounded-full shrink-0 ${isRead ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                       <span className="font-medium text-slate-900 flex-1">{email}</span>

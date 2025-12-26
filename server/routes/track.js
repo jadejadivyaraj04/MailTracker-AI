@@ -75,13 +75,22 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     // Must have an identified recipient email at this point
     if (!openEmail) return false;
 
-    // Filter out sender's own opens
-    if (normalizedSenderEmail && openEmail === normalizedSenderEmail) return false;
+    // Exclude opens where recipient is the sender (viewing own sent email)
+    // BUT allow it if it happens after the buffer (for testing purposes)
+    const isSender = normalizedSenderEmail && openEmail === normalizedSenderEmail;
 
-    // Filter out "Too Soon" opens (buffer)
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
-    if (timeDiffSeconds < BUFFER_SECONDS) return false;
+
+    if (isSender && timeDiffSeconds < BUFFER_SECONDS) {
+      console.log(`[MailTracker AI] Skipping open: sender viewing own email within buffer (${timeDiffSeconds}s)`);
+      return false;
+    }
+
+    if (timeDiffSeconds < BUFFER_SECONDS) {
+      console.log(`[MailTracker AI] Skipping open: too soon (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
+      return false;
+    }
 
     return true;
   });
@@ -94,12 +103,21 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     // Find if ANY valid open belongs to this specific email
     const openForThisUser = validOpens.find(open => {
       const openEmail = normalizeEmail(open.recipientEmail);
-      if (openEmail === targetEmail) return true;
+      const matchesDirect = openEmail === targetEmail;
 
-      // Backup: check if token matches
       const tokenForThisUser = tokens[email];
-      return tokenForThisUser && tokenForThisUser === open.token;
+      const matchesToken = tokenForThisUser && tokenForThisUser === open.token;
+
+      if (matchesDirect || matchesToken) {
+        console.log(`[MailTracker AI] ✅ Valid open for ${email}: direct=${matchesDirect}, token=${matchesToken}`);
+        return true;
+      }
+      return false;
     });
+
+    if (!openForThisUser && validOpens.length > 0) {
+      console.log(`[MailTracker AI] ❌ No match for recipient ${email} among ${validOpens.length} valid opens`);
+    }
 
     return {
       email,
@@ -219,9 +237,9 @@ router.options('/pixel', (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.sendStatus(200);
 });
-
 router.get('/pixel', async (req, res) => {
-  const { uid, token } = req.query; // Extract both uid and token
+  const { uid, token } = req.query;
+  console.log(`[MailTracker AI] Incoming pixel request: uid=${uid}, token=${token || 'NONE'}`);
 
   if (!uid) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -288,12 +306,13 @@ router.get('/pixel', async (req, res) => {
 
     await OpenEvent.create({
       messageUid: uid,
-      recipientEmail, // Will be null if registration hasn't finished yet
-      token: token || null, // CRITICAL: Store token for lazy identification later
+      recipientEmail,
+      token: token || null,
       ipHash: hashIp(ip, userAgent),
       userAgent,
       isProxy
     });
+    console.log(`[MailTracker AI] Open logged: uid=${uid}, recipient=${recipientEmail || 'UNKNOWN'}, token=${token || 'NONE'}, isProxy=${isProxy}`);
 
     console.log('[MailTracker AI] OpenEvent created:', {
       messageUid: uid,
@@ -476,6 +495,30 @@ router.get('/stats/user/:userId', async (req, res) => {
       details: error.message,
       userId: req.params.userId
     });
+  }
+});
+
+// Debug endpoint to inspect message status
+router.get('/debug/track/:uid', async (req, res) => {
+  const { uid } = req.params;
+  try {
+    const message = await Message.findOne({ uid });
+    const opens = await OpenEvent.find({ messageUid: uid });
+    const clicks = await ClickEvent.find({ messageUid: uid });
+
+    // Calculate stats using the helper
+    const validated = message ? validateMessageStats(message, opens, clicks) : null;
+
+    return res.json({
+      exists: !!message,
+      message,
+      opens,
+      clicks,
+      validated,
+      serverTime: new Date()
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
