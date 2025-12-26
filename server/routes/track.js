@@ -75,17 +75,28 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     // Must have an identified recipient email at this point
     if (!openEmail) return false;
 
-    // Smart Sender Exclusion:
-    // Exclude if it's the sender's email AND they are using the same IP as when they sent it
-    const isSenderEmail = normalizedSenderEmail && openEmail === normalizedSenderEmail;
+    // Smart Sender/Self-Open Protection:
     const isSenderIp = message.metadata?.senderIpHash && open.ipHash === message.metadata.senderIpHash;
+    const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
+    const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    if (isSenderEmail && isSenderIp) {
-      console.log(`[MailTracker AI] Skipping open: confirmed sender self-open via Email+IP`);
-      return false;
+    // If it's coming from the sender's IP, we are VERY suspicious.
+    if (isSenderIp) {
+      // If it's within 10 seconds, it is almost certainly the sender's browser loading the sent box.
+      if (timeDiffSeconds < 10) {
+        console.log(`[MailTracker AI] Skipping open: detected sender self-trigger within 10s window (${timeDiffSeconds}s)`);
+        return false;
+      }
+
+      // If it's the sender's IP AND the sender's email, it's a self-open (ignore)
+      const isSenderEmail = normalizedSenderEmail && openEmail === normalizedSenderEmail;
+      if (isSenderEmail) {
+        console.log(`[MailTracker AI] Skipping open: confirmed sender self-view (Email+IP)`);
+        return false;
+      }
     }
 
-    // No timing buffer - if it's a valid identified recipient, count it immediately
+    // No buffer for proxies or other IPs - if it's a valid identified recipient, count it!
     return true;
   });
 
