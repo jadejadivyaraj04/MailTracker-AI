@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Navbar from '../components/Navbar.jsx';
 import EmailList from '../components/EmailList.jsx';
 import StatsChart from '../components/StatsChart.jsx';
-import { exportToCSV } from '../utils/csvExport.js';
+import { exportToCSV } from './csvExport.js';
 
 function Dashboard({ userId, apiBase, onLogout }) {
   const [loading, setLoading] = useState(true);

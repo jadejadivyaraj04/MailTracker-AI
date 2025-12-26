@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import Message from '../models/Message.js';
 import OpenEvent from '../models/OpenEvent.js';
 import ClickEvent from '../models/ClickEvent.js';
-import { messageCache } from '../cache.js';
+import { messageCache } from './cache.js';
 
 const router = express.Router();
 
