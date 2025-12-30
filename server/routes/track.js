@@ -54,7 +54,7 @@ const normalizeEmail = (email) => (email || '').toLowerCase().trim();
  */
 const validateMessageStats = (message, opens = [], clicks = []) => {
   const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-  const BUFFER_SECONDS = 30; // Increased buffer to filter out sender previews
+  const BUFFER_SECONDS = 10; // Reduced buffer - 10 seconds should catch sender previews
   const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
   const tokenMap = message.recipientTokens || {};
   const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
@@ -96,18 +96,25 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       return false;
     }
 
-    // Exclude opens that happen too soon after sending (likely sender previews)
-    if (timeDiffSeconds < BUFFER_SECONDS) {
-      console.log(`[MailTracker AI]     ❌ Rejected: Too soon after send (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
-      return false;
-    }
-
     // Check if this is a proxy/bot open
     if (open.isProxy) {
       console.log(`[MailTracker AI]     ❌ Rejected: Email proxy/bot open`);
       return false;
     }
 
+    // Only apply time buffer if we suspect it might be a sender preview
+    // If the open has a valid recipient email that's different from sender, 
+    // and it's not a proxy, then it's likely legitimate even if quick
+    const isLikelySenderPreview = timeDiffSeconds < BUFFER_SECONDS && 
+                                  (!openEmail || openEmail === normalizedSenderEmail);
+    
+    if (isLikelySenderPreview) {
+      console.log(`[MailTracker AI]     ❌ Rejected: Likely sender preview (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
+      return false;
+    }
+
+    // If we have a different recipient email and it's not a proxy, accept it
+    // even if it's quick (recipient might open email immediately)
     console.log(`[MailTracker AI]     ✅ Valid open: ${openEmail} at ${timeDiffSeconds}s`);
     return true;
   });
