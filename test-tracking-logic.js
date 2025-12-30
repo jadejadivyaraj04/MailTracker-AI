@@ -6,7 +6,7 @@ const normalizeEmail = (email) => (email || '').toLowerCase().trim();
 
 const validateMessageStats = (message, opens = [], clicks = []) => {
   const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-  const BUFFER_SECONDS = 10;
+  const BUFFER_SECONDS = 15; // Increased buffer - opens within 15s are likely sender previews
   const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
   const tokenMap = message.recipientTokens || {};
   const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
@@ -51,7 +51,7 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    console.log(`[Test]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s, proxy=${open.isProxy}`);
+    console.log(`[Test]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s, proxy=${open.isProxy}, token=${open.token ? 'YES' : 'NO'}`);
 
     if (!openEmail) {
       console.log(`[Test]     ❌ Rejected: No recipient email identified`);
@@ -65,26 +65,30 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       return false;
     }
 
+    // STRICT TIME FILTERING: Any open within 15 seconds is suspicious
+    if (timeDiffSeconds < BUFFER_SECONDS) {
+      console.log(`[Test]     ❌ Rejected: Too soon after send (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
+      return false;
+    }
+
+    // Additional check: Opens without tokens are more suspicious
+    if (!open.token && timeDiffSeconds < 30) {
+      console.log(`[Test]     ❌ Rejected: No token and quick open (${timeDiffSeconds}s)`);
+      return false;
+    }
+
     // Handle proxy opens more intelligently
     if (open.isProxy) {
       const recipientOpens = opensByRecipient[openEmail] || [];
       const nonProxyOpens = recipientOpens.filter(o => !o.isProxy);
       
-      if (nonProxyOpens.length === 0 && timeDiffSeconds > 30) {
+      if (nonProxyOpens.length === 0 && timeDiffSeconds > 60) {
         console.log(`[Test]     ⚠️  Accepting proxy open: Only open for ${openEmail} after ${timeDiffSeconds}s`);
         return true;
       } else {
         console.log(`[Test]     ❌ Rejected: Email proxy/bot open`);
         return false;
       }
-    }
-
-    const isLikelySenderPreview = timeDiffSeconds < BUFFER_SECONDS && 
-                                  (!openEmail || openEmail === normalizedSenderEmail);
-    
-    if (isLikelySenderPreview) {
-      console.log(`[Test]     ❌ Rejected: Likely sender preview`);
-      return false;
     }
 
     console.log(`[Test]     ✅ Valid open: ${openEmail} at ${timeDiffSeconds}s`);
@@ -229,3 +233,34 @@ const test6 = validateMessageStats(
   ]
 );
 console.log(`Expected: 1 opens (proxy should be accepted), Got: ${test6.openCount}\n`);
+
+// Test with your actual problematic data
+console.log('📧 Test 7: Your problematic email (should now be filtered)');
+const test7 = validateMessageStats(
+  {
+    uid: '751e5d16-0149-40a2-9c29-70745c483eff',
+    senderEmail: 'divyarajsinh.jadeja@bytestechnolab.com',
+    sentAt: new Date('2025-12-30T07:44:04.670Z'),
+    recipients: { 
+      to: ['darshan.vachhani+105@bytestechnolab.com'],
+      cc: [],
+      bcc: ['divyarajsinh.jadeja@bytestechnolab.com']
+    },
+    recipientTokens: {
+      'darshan.vachhani+105@bytestechnolab.com': '9e818cabe7555b228c4d34e635767add',
+      'divyarajsinh.jadeja@bytestechnolab.com': 'ba64fa69d8a71f2aa0c1e79781d5a94a'
+    }
+  },
+  [
+    {
+      recipientEmail: 'darshan.vachhani+105@bytestechnolab.com',
+      createdAt: new Date('2025-12-30T07:44:05.603Z'), // 0.933s after send
+      isProxy: false,
+      token: null // No token!
+    }
+  ]
+);
+console.log(`Expected: 0 opens (should be filtered), Got: ${test7.openCount}\n`);
+
+console.log('🏁 Test completed!');
+console.log('The problematic email should now be filtered out with stricter rules.');

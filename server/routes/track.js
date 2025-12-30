@@ -54,7 +54,7 @@ const normalizeEmail = (email) => (email || '').toLowerCase().trim();
  */
 const validateMessageStats = (message, opens = [], clicks = []) => {
   const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-  const BUFFER_SECONDS = 10; // Reduced buffer - 10 seconds should catch sender previews
+  const BUFFER_SECONDS = 15; // Increased buffer - opens within 15s are likely sender previews
   const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
   const tokenMap = message.recipientTokens || {};
   const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
@@ -104,7 +104,7 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    console.log(`[MailTracker AI]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s after send, proxy=${open.isProxy}`);
+    console.log(`[MailTracker AI]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s after send, proxy=${open.isProxy}, token=${open.token ? 'YES' : 'NO'}`);
 
     // Must have an identified recipient email at this point
     if (!openEmail) {
@@ -120,6 +120,20 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       return false;
     }
 
+    // STRICT TIME FILTERING: Any open within 15 seconds is suspicious
+    // Real recipients rarely open emails that quickly
+    if (timeDiffSeconds < BUFFER_SECONDS) {
+      console.log(`[MailTracker AI]     ❌ Rejected: Too soon after send (${timeDiffSeconds}s < ${BUFFER_SECONDS}s) - likely sender preview`);
+      return false;
+    }
+
+    // Additional check: Opens without tokens are more suspicious
+    // If it's quick AND has no token, it's likely a false positive
+    if (!open.token && timeDiffSeconds < 30) {
+      console.log(`[MailTracker AI]     ❌ Rejected: No token and quick open (${timeDiffSeconds}s) - likely false positive`);
+      return false;
+    }
+
     // Handle proxy opens more intelligently
     if (open.isProxy) {
       // If this is the only open for this recipient, and it's after a reasonable delay,
@@ -127,9 +141,8 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       const recipientOpens = opensByRecipient[openEmail] || [];
       const nonProxyOpens = recipientOpens.filter(o => !o.isProxy);
       
-      if (nonProxyOpens.length === 0 && timeDiffSeconds > 30) {
-        // Only proxy opens for this recipient, and it's been a while
-        // This likely means the recipient opened it and Gmail prefetched
+      if (nonProxyOpens.length === 0 && timeDiffSeconds > 60) {
+        // Only proxy opens for this recipient, and it's been over a minute
         console.log(`[MailTracker AI]     ⚠️  Accepting proxy open: Only open for ${openEmail} after ${timeDiffSeconds}s`);
         return true;
       } else {
@@ -138,19 +151,7 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       }
     }
 
-    // Only apply time buffer if we suspect it might be a sender preview
-    // If the open has a valid recipient email that's different from sender, 
-    // and it's not a proxy, then it's likely legitimate even if quick
-    const isLikelySenderPreview = timeDiffSeconds < BUFFER_SECONDS && 
-                                  (!openEmail || openEmail === normalizedSenderEmail);
-    
-    if (isLikelySenderPreview) {
-      console.log(`[MailTracker AI]     ❌ Rejected: Likely sender preview (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
-      return false;
-    }
-
-    // If we have a different recipient email and it's not a proxy, accept it
-    // even if it's quick (recipient might open email immediately)
+    // If we get here, it's a legitimate open
     console.log(`[MailTracker AI]     ✅ Valid open: ${openEmail} at ${timeDiffSeconds}s`);
     return true;
   });
