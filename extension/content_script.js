@@ -860,23 +860,25 @@ class GmailRecipientExtractor {
   extractSender(composeRoot) {
     console.log('[MailTracker AI] Attempting to identify sender...');
 
-    // Strategy 1: Look for "From" field
+    // Strategy 1: Look for "From" field in Gmail
     const fromSelectors = [
       'input[name="from"]',
       '[aria-label*="From" i]',
       '[aria-label*="Sender" i]',
-      '.gU.Up' // Gmail specific class for sender wrapper
+      '.gU.Up', // Gmail specific class for sender wrapper
+      '[data-tooltip*="from" i]',
+      '.aYF' // Gmail sender area class
     ];
 
     for (const selector of fromSelectors) {
       const elements = composeRoot.querySelectorAll(selector);
       for (const el of elements) {
         // Extract email from this element
-        const value = el.value || el.textContent || el.getAttribute('aria-label') || '';
+        const value = el.value || el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-tooltip') || '';
         if (value.includes('@')) {
           const email = this.extractEmailFromText(value);
           if (email && this.isValidEmail(email)) {
-            console.log(`[MailTracker AI] Identified sender: ${email}`);
+            console.log(`[MailTracker AI] Identified sender via ${selector}: ${email}`);
             return email;
           }
         }
@@ -890,6 +892,28 @@ class GmailRecipientExtractor {
       }
     }
 
+    // Strategy 2: Look for sender info in Gmail's account switcher area
+    const accountElements = document.querySelectorAll('[data-email], [aria-label*="account" i]');
+    for (const el of accountElements) {
+      const email = el.getAttribute('data-email') || el.textContent;
+      if (email && email.includes('@')) {
+        const cleanEmail = this.extractEmailFromText(email);
+        if (cleanEmail && this.isValidEmail(cleanEmail)) {
+          console.log(`[MailTracker AI] Identified sender from account info: ${cleanEmail}`);
+          return cleanEmail;
+        }
+      }
+    }
+
+    // Strategy 3: Check URL for account hint
+    const urlParams = new URLSearchParams(window.location.search);
+    const authUser = urlParams.get('authuser');
+    if (authUser) {
+      // Gmail sometimes includes account info in URL, but this is not reliable for email
+      console.log(`[MailTracker AI] Found authuser in URL: ${authUser} (not directly usable)`);
+    }
+
+    console.log('[MailTracker AI] Could not identify sender from DOM');
     return null;
   }
 
@@ -1512,9 +1536,16 @@ const handleBaseSend = (composeRoot, source = 'click') => {
       const refinedRecipients = await extractRecipientsWithRetry(composeRoot, 3, 100);
       let senderEmail = recipientExtractor.extractSender(composeRoot);
 
+      // Fallback: Use userId from storage if sender not detected from DOM
       if (!senderEmail) {
         const stored = await chrome.storage.sync.get(['userId']);
-        senderEmail = stored.userId || userId || 'default';
+        const storedUserId = stored.userId || userId || 'default';
+        if (storedUserId && storedUserId !== 'default' && storedUserId.includes('@')) {
+          senderEmail = storedUserId;
+          console.log(`[MailTracker AI] Using stored userId as sender: ${senderEmail}`);
+        } else {
+          console.warn(`[MailTracker AI] Could not identify sender - no valid email in storage`);
+        }
       }
 
       // Merge tokens (in case refined extraction found more people)

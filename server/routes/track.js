@@ -54,10 +54,15 @@ const normalizeEmail = (email) => (email || '').toLowerCase().trim();
  */
 const validateMessageStats = (message, opens = [], clicks = []) => {
   const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-  const BUFFER_SECONDS = 1; // Lowered for fast tests
+  const BUFFER_SECONDS = 30; // Increased buffer to filter out sender previews
   const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
   const tokenMap = message.recipientTokens || {};
   const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
+
+  console.log(`[MailTracker AI] Validating stats for message ${message.uid}:`);
+  console.log(`[MailTracker AI]   Sender: ${normalizedSenderEmail}`);
+  console.log(`[MailTracker AI]   Total opens: ${opens.length}`);
+  console.log(`[MailTracker AI]   Sent at: ${message.sentAt}`);
 
   // 1. Filter opens to get "Valid Human Recipient Opens"
   const validOpens = opens.filter(open => {
@@ -72,28 +77,42 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       }
     }
 
-    // Must have an identified recipient email at this point
-    if (!openEmail) return false;
-
-    // Exclude opens where recipient is the sender (viewing own sent email)
-    // BUT allow it if it happens after the buffer (for testing purposes)
-    const isSender = normalizedSenderEmail && openEmail === normalizedSenderEmail;
-
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    if (isSender && timeDiffSeconds < BUFFER_SECONDS) {
-      console.log(`[MailTracker AI] Skipping open: sender viewing own email within buffer (${timeDiffSeconds}s)`);
+    console.log(`[MailTracker AI]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s after send`);
+
+    // Must have an identified recipient email at this point
+    if (!openEmail) {
+      console.log(`[MailTracker AI]     ❌ Rejected: No recipient email identified`);
       return false;
     }
 
+    // Exclude opens where recipient is the sender (viewing own sent email)
+    const isSender = normalizedSenderEmail && openEmail === normalizedSenderEmail;
+    
+    if (isSender) {
+      console.log(`[MailTracker AI]     ❌ Rejected: Sender viewing own email (${openEmail})`);
+      return false;
+    }
+
+    // Exclude opens that happen too soon after sending (likely sender previews)
     if (timeDiffSeconds < BUFFER_SECONDS) {
-      console.log(`[MailTracker AI] Skipping open: too soon (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
+      console.log(`[MailTracker AI]     ❌ Rejected: Too soon after send (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
       return false;
     }
 
+    // Check if this is a proxy/bot open
+    if (open.isProxy) {
+      console.log(`[MailTracker AI]     ❌ Rejected: Email proxy/bot open`);
+      return false;
+    }
+
+    console.log(`[MailTracker AI]     ✅ Valid open: ${openEmail} at ${timeDiffSeconds}s`);
     return true;
   });
+
+  console.log(`[MailTracker AI]   Result: ${validOpens.length} valid opens out of ${opens.length} total`);
 
   // 2. Map read status to specific recipients (To list)
   const toRecipients = (message.recipients?.to || []).filter(Boolean);
@@ -512,7 +531,7 @@ router.get('/debug/track/:uid', async (req, res) => {
   const { uid } = req.params;
   try {
     const message = await Message.findOne({ uid });
-    const opens = await OpenEvent.find({ messageUid: uid });
+    const opens = await OpenEvent.find({ messageUid: uid }).sort({ createdAt: 1 });
     const clicks = await ClickEvent.find({ messageUid: uid });
 
     // Calculate stats using the helper
@@ -521,10 +540,61 @@ router.get('/debug/track/:uid', async (req, res) => {
     return res.json({
       exists: !!message,
       message,
-      opens,
+      opens: opens.map(open => ({
+        ...open.toObject(),
+        timeSinceSent: message ? (new Date(open.createdAt) - new Date(message.sentAt)) / 1000 : null
+      })),
       clicks,
       validated,
-      serverTime: new Date()
+      serverTime: new Date(),
+      analysis: {
+        totalOpens: opens.length,
+        validOpens: validated?.openCount || 0,
+        senderEmail: message?.senderEmail,
+        recipients: message?.recipients,
+        sentAt: message?.sentAt
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// New debug endpoint to see all opens for a user
+router.get('/debug/user/:userId/opens', async (req, res) => {
+  const userId = decodeURIComponent(req.params.userId || 'default').toLowerCase().trim();
+  
+  try {
+    const messages = await Message.find({ userId }).sort({ createdAt: -1 }).limit(10);
+    const messageUids = messages.map(m => m.uid);
+    const opens = await OpenEvent.find({ messageUid: { $in: messageUids } }).sort({ createdAt: -1 });
+    
+    const analysis = messages.map(message => {
+      const messageOpens = opens.filter(o => o.messageUid === message.uid);
+      const validated = validateMessageStats(message, messageOpens, []);
+      
+      return {
+        uid: message.uid,
+        subject: message.subject,
+        senderEmail: message.senderEmail,
+        recipients: message.recipients,
+        sentAt: message.sentAt,
+        totalOpens: messageOpens.length,
+        validOpens: validated.openCount,
+        opens: messageOpens.map(open => ({
+          recipientEmail: open.recipientEmail,
+          createdAt: open.createdAt,
+          timeSinceSent: (new Date(open.createdAt) - new Date(message.sentAt)) / 1000,
+          isProxy: open.isProxy,
+          token: open.token
+        }))
+      };
+    });
+    
+    return res.json({
+      userId,
+      totalMessages: messages.length,
+      analysis
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
