@@ -913,6 +913,17 @@ class GmailRecipientExtractor {
       console.log(`[MailTracker AI] Found authuser in URL: ${authUser} (not directly usable)`);
     }
 
+    // Strategy 4: Document Title (e.g. "Inbox - user@gmail.com - Gmail")
+    // This is often extremely reliable as a fallback
+    const titleMatch = document.title.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/);
+    if (titleMatch && titleMatch[1]) {
+      const email = this.extractEmailFromText(titleMatch[1]);
+      if (email && this.isValidEmail(email)) {
+        console.log(`[MailTracker AI] Identified sender from document title: ${email}`);
+        return email;
+      }
+    }
+
     console.log('[MailTracker AI] Could not identify sender from DOM');
     return null;
   }
