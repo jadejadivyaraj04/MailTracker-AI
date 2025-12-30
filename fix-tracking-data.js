@@ -32,7 +32,9 @@ async function fixTrackingData() {
 
   try {
     // Connect to MongoDB
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/mailtracker');
+    // Connect to MongoDB
+    const DEFAULT_URI = 'mongodb+srv://developerdivyaraj_db_user:tqNh6PskV9lz01FW@cluster0.ukdltke.mongodb.net/?appName=Cluster0';
+    await mongoose.connect(process.env.MONGO_URI || process.argv[2] || DEFAULT_URI);
     console.log('✅ Connected to MongoDB');
 
     // Step 1: Fix missing sender emails
@@ -81,11 +83,11 @@ async function fixTrackingData() {
 
       // Try token-based identification
       if (open.token && message.recipientTokens) {
-        const tokens = message.recipientTokens instanceof Map ? 
-          Object.fromEntries(message.recipientTokens) : 
+        const tokens = message.recipientTokens instanceof Map ?
+          Object.fromEntries(message.recipientTokens) :
           message.recipientTokens;
 
-        const matchingEntry = Object.entries(tokens).find(([_, storedToken]) => 
+        const matchingEntry = Object.entries(tokens).find(([_, storedToken]) =>
           storedToken === open.token
         );
 
@@ -119,9 +121,9 @@ async function fixTrackingData() {
 
     // Step 3: Analysis and summary
     console.log('\n📊 Step 3: Data analysis...');
-    
+
     const totalMessages = await Message.countDocuments();
-    const messagesWithSender = await Message.countDocuments({ 
+    const messagesWithSender = await Message.countDocuments({
       senderEmail: { $exists: true, $ne: null, $ne: '' }
     });
     const totalOpens = await OpenEvent.countDocuments();
@@ -134,30 +136,30 @@ async function fixTrackingData() {
 
     // Step 4: Test validation on recent messages
     console.log('\n🧪 Step 4: Testing validation on recent messages...');
-    
+
     const recentMessages = await Message.find({}).sort({ createdAt: -1 }).limit(5);
-    
+
     for (const message of recentMessages) {
       const opens = await OpenEvent.find({ messageUid: message.uid });
-      
+
       console.log(`\n📧 "${message.subject}"`);
       console.log(`   Sender: ${message.senderEmail || 'NULL'}`);
       console.log(`   Recipients: ${JSON.stringify(message.recipients?.to || [])}`);
       console.log(`   Opens: ${opens.length} total`);
-      
+
       let validOpens = 0;
       opens.forEach(open => {
         const hasRecipient = open.recipientEmail && open.recipientEmail.trim();
-        const isSender = message.senderEmail && 
-                        open.recipientEmail === message.senderEmail;
-        const timeDiff = message.sentAt ? 
+        const isSender = message.senderEmail &&
+          open.recipientEmail === message.senderEmail;
+        const timeDiff = message.sentAt ?
           (new Date(open.createdAt) - new Date(message.sentAt)) / 1000 : 0;
-        
+
         if (hasRecipient && !isSender && timeDiff > 10) {
           validOpens++;
         }
       });
-      
+
       console.log(`   Valid opens: ${validOpens}`);
       console.log(`   Status: ${validOpens > 0 ? '📖 READ' : '📪 UNREAD'}`);
     }
