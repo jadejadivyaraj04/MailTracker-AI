@@ -1545,6 +1545,20 @@ const handleBaseSend = (composeRoot, source = 'click') => {
           console.log(`[MailTracker AI] Using stored userId as sender: ${senderEmail}`);
         } else {
           console.warn(`[MailTracker AI] Could not identify sender - no valid email in storage`);
+          // Try to get from Chrome identity API as last resort
+          try {
+            if (chrome.identity && chrome.identity.getProfileUserInfo) {
+              const userInfo = await new Promise((resolve) => {
+                chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, resolve);
+              });
+              if (userInfo && userInfo.email) {
+                senderEmail = userInfo.email;
+                console.log(`[MailTracker AI] Using Chrome identity as sender: ${senderEmail}`);
+              }
+            }
+          } catch (identityError) {
+            console.warn(`[MailTracker AI] Chrome identity failed:`, identityError);
+          }
         }
       }
 

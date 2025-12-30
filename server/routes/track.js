@@ -332,41 +332,61 @@ router.get('/pixel', async (req, res) => {
         if (message) messageCache.set(uid, message);
       }
 
-      if (message && message.recipientTokens && token) {
-        // Token-based identification (new method - most accurate)
-        const tokenMap = message.recipientTokens;
+      if (message) {
+        console.log(`[MailTracker AI] Found message: ${message.subject}, sender: ${message.senderEmail}`);
+        console.log(`[MailTracker AI] Recipients: ${JSON.stringify(message.recipients)}`);
+        console.log(`[MailTracker AI] Tokens available: ${Object.keys(message.recipientTokens || {}).length}`);
 
-        // Convert Map to Object if needed (Mongoose returns Map for Map type)
-        const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
+        if (message.recipientTokens && token) {
+          // Token-based identification (new method - most accurate)
+          const tokenMap = message.recipientTokens;
 
-        // Find which recipient this token belongs to
-        const matchingEntry = Object.entries(tokens).find(([email, storedToken]) => storedToken === token);
+          // Convert Map to Object if needed (Mongoose returns Map for Map type)
+          const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
 
-        if (matchingEntry) {
-          recipientEmail = matchingEntry[0]; // Get email from token
-          console.log('[MailTracker AI] Pixel loaded - Recipient identified via token:', recipientEmail);
-        } else {
-          console.log('[MailTracker AI] Pixel loaded - Token provided but invalid:', token);
-        }
-      } else if (message && message.recipients && !token) {
-        // Fallback for backward compatibility (old emails without tokens)
-        const toRecipients = (message.recipients.to || []).filter(Boolean);
+          // Find which recipient this token belongs to
+          const matchingEntry = Object.entries(tokens).find(([email, storedToken]) => storedToken === token);
 
-        if (toRecipients.length === 1) {
-          const normalizedEmail = toRecipients[0].toLowerCase().trim();
-          if (normalizedEmail && normalizedEmail.length > 0) {
-            recipientEmail = normalizedEmail;
-            console.log('[MailTracker AI] Pixel loaded - Single "To" recipient (fallback):', recipientEmail);
+          if (matchingEntry) {
+            recipientEmail = matchingEntry[0]; // Get email from token
+            console.log('[MailTracker AI] ✅ Recipient identified via token:', recipientEmail);
+          } else {
+            console.log('[MailTracker AI] ❌ Token provided but invalid:', token);
+            console.log('[MailTracker AI] Available tokens:', Object.keys(tokens));
           }
-        } else if (toRecipients.length > 1) {
-          console.log('[MailTracker AI] Pixel loaded - Multiple recipients but no token, cannot identify individual');
-        } else {
-          console.log('[MailTracker AI] Pixel loaded - No "To" recipients found');
+        } else if (message.recipients && !token) {
+          // Fallback for backward compatibility (old emails without tokens)
+          const toRecipients = (message.recipients.to || []).filter(Boolean);
+
+          if (toRecipients.length === 1) {
+            const normalizedEmail = toRecipients[0].toLowerCase().trim();
+            if (normalizedEmail && normalizedEmail.length > 0) {
+              recipientEmail = normalizedEmail;
+              console.log('[MailTracker AI] ✅ Single "To" recipient (fallback):', recipientEmail);
+            }
+          } else if (toRecipients.length > 1) {
+            console.log('[MailTracker AI] ⚠️  Multiple recipients but no token, cannot identify individual');
+            // For multiple recipients without token, we can't identify which one opened
+            // But we can still log the open event without recipient email
+          } else {
+            console.log('[MailTracker AI] ❌ No "To" recipients found');
+          }
+        } else if (!token) {
+          console.log('[MailTracker AI] ⚠️  No token provided (old pixel format)');
+          // Try to identify from single recipient as fallback
+          const allRecipients = [
+            ...(message.recipients?.to || []),
+            ...(message.recipients?.cc || []),
+            ...(message.recipients?.bcc || [])
+          ].filter(Boolean);
+          
+          if (allRecipients.length === 1) {
+            recipientEmail = allRecipients[0].toLowerCase().trim();
+            console.log('[MailTracker AI] ✅ Single recipient fallback:', recipientEmail);
+          }
         }
-      } else if (!message) {
-        console.log('[MailTracker AI] Pixel loaded - Message not found for uid:', uid);
-      } else if (!token) {
-        console.log('[MailTracker AI] Pixel loaded - No token provided (old pixel format)');
+      } else {
+        console.log('[MailTracker AI] ❌ Message not found for uid:', uid);
       }
     } catch (lookupError) {
       console.warn('[MailTracker AI] Could not lookup message for recipient tracking', lookupError);
@@ -375,7 +395,7 @@ router.get('/pixel', async (req, res) => {
     // Create OpenEvent (with or without recipient identification)
     const isProxy = checkIfProxy(userAgent);
 
-    await OpenEvent.create({
+    const openEvent = await OpenEvent.create({
       messageUid: uid,
       recipientEmail,
       token: token || null,
@@ -383,15 +403,15 @@ router.get('/pixel', async (req, res) => {
       userAgent,
       isProxy
     });
-    console.log(`[MailTracker AI] Open logged: uid=${uid}, recipient=${recipientEmail || 'UNKNOWN'}, token=${token || 'NONE'}, isProxy=${isProxy}`);
 
-    console.log('[MailTracker AI] OpenEvent created:', {
+    console.log(`[MailTracker AI] ✅ Open logged:`, {
       messageUid: uid,
-      recipientEmail,
+      recipientEmail: recipientEmail || 'UNKNOWN',
+      token: token || 'NONE',
       isProxy,
-      hasToken: !!token,
-      tokenValid: !!recipientEmail
+      userAgent: userAgent.substring(0, 50) + '...'
     });
+
   } catch (error) {
     console.error('[MailTracker AI] pixel logging error', error);
   }
