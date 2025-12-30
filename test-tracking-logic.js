@@ -6,7 +6,7 @@ const normalizeEmail = (email) => (email || '').toLowerCase().trim();
 
 const validateMessageStats = (message, opens = [], clicks = []) => {
   const sentAtTime = message.sentAt ? new Date(message.sentAt).getTime() : 0;
-  const BUFFER_SECONDS = 10; // Reduced buffer - 10 seconds should catch sender previews
+  const BUFFER_SECONDS = 10;
   const normalizedSenderEmail = message.senderEmail ? normalizeEmail(message.senderEmail) : null;
   const tokenMap = message.recipientTokens || {};
   const tokens = tokenMap instanceof Map ? Object.fromEntries(tokenMap) : tokenMap;
@@ -14,11 +14,11 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
   console.log(`[Test] Validating stats for message ${message.uid}:`);
   console.log(`[Test]   Sender: ${normalizedSenderEmail}`);
   console.log(`[Test]   Total opens: ${opens.length}`);
-  console.log(`[Test]   Sent at: ${message.sentAt}`);
 
-  // 1. Filter opens to get "Valid Human Recipient Opens"
-  const validOpens = opens.filter(open => {
-    // Determine the email for this open (stored or via token)
+  // Group opens by recipient for better analysis
+  const opensByRecipient = {};
+  
+  opens.forEach(open => {
     let openEmail = normalizeEmail(open.recipientEmail);
 
     // Lazy Identification: If no email stored, try matching via token
@@ -29,44 +29,64 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       }
     }
 
+    if (openEmail) {
+      if (!opensByRecipient[openEmail]) {
+        opensByRecipient[openEmail] = [];
+      }
+      opensByRecipient[openEmail].push(open);
+    }
+  });
+
+  // Filter opens
+  const validOpens = opens.filter(open => {
+    let openEmail = normalizeEmail(open.recipientEmail);
+
+    if (!openEmail && open.token) {
+      const matchingEntry = Object.entries(tokens).find(([_, storedToken]) => storedToken === open.token);
+      if (matchingEntry) {
+        openEmail = normalizeEmail(matchingEntry[0]);
+      }
+    }
+
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    console.log(`[Test]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s after send`);
+    console.log(`[Test]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s, proxy=${open.isProxy}`);
 
-    // Must have an identified recipient email at this point
     if (!openEmail) {
       console.log(`[Test]     ❌ Rejected: No recipient email identified`);
       return false;
     }
 
-    // Exclude opens where recipient is the sender (viewing own sent email)
     const isSender = normalizedSenderEmail && openEmail === normalizedSenderEmail;
     
     if (isSender) {
-      console.log(`[Test]     ❌ Rejected: Sender viewing own email (${openEmail})`);
+      console.log(`[Test]     ❌ Rejected: Sender viewing own email`);
       return false;
     }
 
-    // Check if this is a proxy/bot open
+    // Handle proxy opens more intelligently
     if (open.isProxy) {
-      console.log(`[Test]     ❌ Rejected: Email proxy/bot open`);
-      return false;
+      const recipientOpens = opensByRecipient[openEmail] || [];
+      const nonProxyOpens = recipientOpens.filter(o => !o.isProxy);
+      
+      if (nonProxyOpens.length === 0 && timeDiffSeconds > 30) {
+        console.log(`[Test]     ⚠️  Accepting proxy open: Only open for ${openEmail} after ${timeDiffSeconds}s`);
+        return true;
+      } else {
+        console.log(`[Test]     ❌ Rejected: Email proxy/bot open`);
+        return false;
+      }
     }
 
-    // Only apply time buffer if we suspect it might be a sender preview
-    // If the open has a valid recipient email that's different from sender, 
-    // and it's not a proxy, then it's likely legitimate even if quick
     const isLikelySenderPreview = timeDiffSeconds < BUFFER_SECONDS && 
                                   (!openEmail || openEmail === normalizedSenderEmail);
     
     if (isLikelySenderPreview) {
-      console.log(`[Test]     ❌ Rejected: Likely sender preview (${timeDiffSeconds}s < ${BUFFER_SECONDS}s)`);
+      console.log(`[Test]     ❌ Rejected: Likely sender preview`);
       return false;
     }
 
-    // If we have a different recipient email and it's not a proxy, accept it
-    // even if it's quick (recipient might open email immediately)
     console.log(`[Test]     ✅ Valid open: ${openEmail} at ${timeDiffSeconds}s`);
     return true;
   });
@@ -176,5 +196,36 @@ const test5 = validateMessageStats(
 );
 console.log(`Expected: 0 opens, Got: ${test5.openCount}\n`);
 
-console.log('🏁 Test completed!');
-console.log('If all tests show expected results, the logic should work correctly.');
+// Test with your actual data
+console.log('📧 Test 6: Your actual email scenario');
+const test6 = validateMessageStats(
+  {
+    uid: '4e6462cf-b81d-471d-8cee-47e8dfe1a9e4',
+    senderEmail: 'divyarajsinh.jadeja@bytestechnolab.com',
+    sentAt: new Date('2025-12-30T07:25:48.455Z'),
+    recipients: { 
+      to: ['darshan.vachhani+105@bytestechnolab.com'],
+      cc: [],
+      bcc: ['divyarajsinh.jadeja@bytestechnolab.com']
+    },
+    recipientTokens: {
+      'darshan.vachhani+105@bytestechnolab.com': '1b821e0190d5e11f147b40021ef13944',
+      'divyarajsinh.jadeja@bytestechnolab.com': '0e2314896a57ef4cd926f92de0f5257e'
+    }
+  },
+  [
+    {
+      recipientEmail: null, // First open - no email identified
+      createdAt: new Date('2025-12-30T07:25:48.759Z'), // 0.3s after send
+      isProxy: false,
+      token: null
+    },
+    {
+      recipientEmail: 'darshan.vachhani+105@bytestechnolab.com', // Second open - recipient
+      createdAt: new Date('2025-12-30T07:27:05.690Z'), // 77s after send
+      isProxy: true, // Gmail proxy
+      token: null
+    }
+  ]
+);
+console.log(`Expected: 1 opens (proxy should be accepted), Got: ${test6.openCount}\n`);

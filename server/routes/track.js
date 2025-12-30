@@ -64,6 +64,30 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
   console.log(`[MailTracker AI]   Total opens: ${opens.length}`);
   console.log(`[MailTracker AI]   Sent at: ${message.sentAt}`);
 
+  // Group opens by recipient for better analysis
+  const opensByRecipient = {};
+  
+  opens.forEach(open => {
+    let openEmail = normalizeEmail(open.recipientEmail);
+
+    // Lazy Identification: If no email stored, try matching via token
+    if (!openEmail && open.token) {
+      const matchingEntry = Object.entries(tokens).find(([_, storedToken]) => storedToken === open.token);
+      if (matchingEntry) {
+        openEmail = normalizeEmail(matchingEntry[0]);
+      }
+    }
+
+    if (openEmail) {
+      if (!opensByRecipient[openEmail]) {
+        opensByRecipient[openEmail] = [];
+      }
+      opensByRecipient[openEmail].push(open);
+    }
+  });
+
+  console.log(`[MailTracker AI]   Opens by recipient:`, Object.keys(opensByRecipient));
+
   // 1. Filter opens to get "Valid Human Recipient Opens"
   const validOpens = opens.filter(open => {
     // Determine the email for this open (stored or via token)
@@ -80,7 +104,7 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
     const openTime = open.createdAt ? new Date(open.createdAt).getTime() : 0;
     const timeDiffSeconds = (openTime - sentAtTime) / 1000;
 
-    console.log(`[MailTracker AI]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s after send`);
+    console.log(`[MailTracker AI]   Checking open: email=${openEmail}, time=${timeDiffSeconds}s after send, proxy=${open.isProxy}`);
 
     // Must have an identified recipient email at this point
     if (!openEmail) {
@@ -96,10 +120,22 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
       return false;
     }
 
-    // Check if this is a proxy/bot open
+    // Handle proxy opens more intelligently
     if (open.isProxy) {
-      console.log(`[MailTracker AI]     ❌ Rejected: Email proxy/bot open`);
-      return false;
+      // If this is the only open for this recipient, and it's after a reasonable delay,
+      // we might want to count it as the recipient likely opened the email
+      const recipientOpens = opensByRecipient[openEmail] || [];
+      const nonProxyOpens = recipientOpens.filter(o => !o.isProxy);
+      
+      if (nonProxyOpens.length === 0 && timeDiffSeconds > 30) {
+        // Only proxy opens for this recipient, and it's been a while
+        // This likely means the recipient opened it and Gmail prefetched
+        console.log(`[MailTracker AI]     ⚠️  Accepting proxy open: Only open for ${openEmail} after ${timeDiffSeconds}s`);
+        return true;
+      } else {
+        console.log(`[MailTracker AI]     ❌ Rejected: Email proxy/bot open (${nonProxyOpens.length} non-proxy opens exist)`);
+        return false;
+      }
     }
 
     // Only apply time buffer if we suspect it might be a sender preview
@@ -163,13 +199,13 @@ const validateMessageStats = (message, opens = [], clicks = []) => {
 
 const checkIfProxy = (userAgent = '') => {
   const ua = userAgent.toLowerCase();
-  // Known email proxy indicators
+  // Known email proxy indicators - be more specific to avoid false positives
   return (
-    ua.includes('google-proxy-imagemessagely') ||
     ua.includes('googleimageproxy') ||
+    ua.includes('google-proxy-imagemessagely') ||
     ua.includes('outlooks-edge-content') ||
-    ua.includes('via ggpht.com') ||
-    ua.includes('apple-mail-canvas')
+    ua.includes('apple-mail-canvas') ||
+    (ua.includes('via ggpht.com') && ua.includes('googleimageproxy'))
   );
 };
 
