@@ -1667,16 +1667,297 @@ const observeComposeUI = () => {
   attachListeners(document.body);
 };
 
+/**
+ * GmailUIEnhancer - Handles visual injections into Gmail UI
+ * (Checkmarks, Sidebar, Reminders)
+ */
+class GmailUIEnhancer {
+  constructor(apiBase) {
+    this.apiBase = apiBase;
+    this.stats = [];
+    this.userId = 'default';
+  }
+
+  async init() {
+    const stored = await chrome.storage.sync.get(['userId']);
+    this.userId = stored.userId || 'default';
+    this.refreshStats();
+    setInterval(() => this.refreshStats(), 60000); // Sync every minute
+    this.observeMailbox();
+    this.injectSidebar();
+  }
+
+  async refreshStats() {
+    if (!this.userId || this.userId === 'default') return;
+    try {
+      const response = await fetch(`${this.apiBase}/stats/user/${encodeURIComponent(this.userId)}`);
+      if (response.ok) {
+        const data = await response.json();
+        this.stats = data.messages || [];
+        this.updateCheckmarks();
+        this.updateSidebarContent();
+      }
+    } catch (err) {
+      console.error('[MailTracker AI] UI Sync error:', err);
+    }
+  }
+
+  observeMailbox() {
+    const observer = new MutationObserver(() => {
+      this.updateCheckmarks();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  updateCheckmarks() {
+    const rows = document.querySelectorAll('tr.zA');
+    rows.forEach(row => {
+      if (row.hasAttribute('data-mt-checked')) return;
+
+      const subjectEl = row.querySelector('.bog');
+      const dateEl = row.querySelector('.xW');
+      if (!subjectEl || !dateEl) return;
+
+      const subject = subjectEl.textContent.trim();
+      const match = this.stats.find(m => m.subject === subject);
+
+      if (match) {
+        row.setAttribute('data-mt-checked', 'true');
+        this.injectCheckmark(dateEl, match);
+        this.injectReminderIfNeeded(subjectEl, match);
+      }
+    });
+  }
+
+  injectCheckmark(parent, message) {
+    if (parent.querySelector('.mt-checkmark')) return;
+
+    const container = document.createElement('span');
+    container.className = 'mt-checkmark';
+    container.style.marginLeft = '8px';
+    container.style.fontSize = '14px';
+    container.style.fontWeight = 'bold';
+    container.title = message.openCount > 0 ? `Read ${message.openCount} times` : 'Delivered (Not read yet)';
+
+    const isRead = message.openCount > 0;
+    container.innerHTML = `<span style="color: ${isRead ? '#34d399' : '#94a3b8'}; transition: all 0.3s ease;">${isRead ? '✓✓' : '✓'}</span>`;
+
+    if (isRead) {
+      container.style.animation = 'mt-pulse 2s infinite';
+    }
+
+    parent.style.display = 'flex';
+    parent.style.alignItems = 'center';
+    parent.appendChild(container);
+  }
+
+  injectReminderIfNeeded(subjectEl, message) {
+    if (message.openCount > 0 || subjectEl.querySelector('.mt-reminder')) return;
+
+    const sentDate = new Date(message.sentAt);
+    const fortyEightHoursAgo = new Date(Date.now() - (48 * 60 * 60 * 1000));
+
+    if (sentDate < fortyEightHoursAgo) {
+      const badge = document.createElement('span');
+      badge.className = 'mt-reminder';
+      badge.textContent = 'Follow-up?';
+      badge.style.cssText = `
+        background: #fef3c7;
+        color: #92400e;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        margin-left: 10px;
+        font-weight: 800;
+        border: 1px solid #fde68a;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      `;
+      subjectEl.appendChild(badge);
+    }
+  }
+
+  async injectSidebar() {
+    if (document.getElementById('mt-sidebar')) return;
+
+    const sidebar = document.createElement('div');
+    sidebar.id = 'mt-sidebar';
+    sidebar.style.cssText = `
+      position: fixed;
+      right: 20px;
+      top: 100px;
+      width: 240px;
+      height: 420px;
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    `;
+
+    sidebar.innerHTML = `
+      <div id="mt-sidebar-header" style="padding: 16px; background: rgba(99, 102, 241, 0.1); border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; user-select: none;">
+        <span style="font-weight: 800; color: #4f46e5; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;">Tracking Activity</span>
+        <button id="mt-sidebar-close" style="background:none; border:none; cursor:pointer; color:#64748b; font-size:20px; font-weight:lighter;">×</button>
+      </div>
+      <div id="mt-sidebar-content" style="flex: 1; overflow-y: auto; padding: 12px;">
+        <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-top: 40px;">Watching for opens...</p>
+      </div>
+    `;
+
+    document.body.appendChild(sidebar);
+
+    // Draggable Helper
+    const makeDraggable = (el, handle, storageKey) => {
+      let isDragging = false;
+      let startX, startY, initialX, initialY;
+      let moved = false;
+
+      handle.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        moved = false;
+        startX = e.clientX;
+        startY = e.clientY;
+        initialX = el.offsetLeft;
+        initialY = el.offsetTop;
+        el.style.transition = 'none';
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) moved = true;
+
+        const x = initialX + dx;
+        const y = initialY + dy;
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        el.style.right = 'auto';
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          el.style.transition = 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+          if (moved) {
+            chrome.storage.local.set({
+              [storageKey]: { left: el.style.left, top: el.style.top }
+            });
+          }
+        }
+      });
+
+      return () => moved; // Returns whether it was a drag
+    };
+
+
+
+    const showReopenButton = async () => {
+      if (document.getElementById('mt-sidebar-reopen')) return;
+
+      const stored = await chrome.storage.local.get(['reopenPos']);
+      const pos = stored.reopenPos || { right: '0', top: '150px' };
+
+      const reopen = document.createElement('button');
+      reopen.id = 'mt-sidebar-reopen';
+      reopen.innerHTML = '👁️';
+      reopen.style.cssText = `
+        position: fixed;
+        ${pos.left ? `left: ${pos.left};` : `right: ${pos.right};`}
+        top: ${pos.top};
+        background: #4f46e5;
+        color: white;
+        border: none;
+        padding: 12px 10px;
+        border-radius: 12px 0 0 12px;
+        cursor: move;
+        z-index: 9999;
+        box-shadow: -2px 0 10px rgba(79,70,229,0.3);
+        transition: transform 0.3s ease;
+      `;
+
+      document.body.appendChild(reopen);
+
+      const isReopenDrag = makeDraggable(reopen, reopen, 'reopenPos');
+
+      reopen.onclick = (e) => {
+        if (isReopenDrag()) return; // Don't open if they were just dragging
+        sidebar.style.transform = 'translateX(0)';
+        reopen.style.transform = 'translateX(100px)';
+        setTimeout(() => reopen.remove(), 300);
+      };
+    };
+
+    document.getElementById('mt-sidebar-close').onclick = (e) => {
+      e.stopPropagation();
+      sidebar.style.transform = 'translateX(280px)';
+      showReopenButton();
+    };
+
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes mt-pulse {
+        0% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.1); opacity: 0.8; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      #mt-sidebar-content::-webkit-scrollbar { width: 4px; }
+      #mt-sidebar-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 10px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  updateSidebarContent() {
+    const list = document.getElementById('mt-sidebar-content');
+    if (!list) return;
+
+    const readMessages = this.stats.filter(m => m.openCount > 0)
+      .sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt))
+      .slice(0, 10);
+
+    if (readMessages.length === 0) return;
+
+    list.innerHTML = readMessages.map(m => `
+      <div style="padding: 12px; border-radius: 12px; background: white; margin-bottom: 10px; border: 1px solid #f1f5f9; transition: transform 0.2s ease; cursor: default;">
+        <div style="font-size: 12px; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${m.subject}">${m.subject || '(No Subject)'}</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+           <span style="font-size: 10px; color: #10b981; font-weight: 800; background: #ecfdf5; padding: 2px 6px; border-radius: 6px;">READ ✓✓</span>
+           <span style="font-size: 9px; color: #94a3b8; font-weight: 500;">${new Date(m.sentAt).toLocaleDateString()}</span>
+        </div>
+      </div>
+    `).join('');
+  }
+}
+
+const uiEnhancer = new GmailUIEnhancer('https://mailtracker-ai.onrender.com');
+
 const bootstrap = () => {
   initStorageSync();
   observeComposeUI();
-  // Add global keyboard shortcut listener
+  uiEnhancer.init();
   document.addEventListener('keydown', handleGlobalKeydown, { capture: true });
 };
 
 document.addEventListener('DOMContentLoaded', bootstrap);
 
-// Gmail is a SPA; ensure scripts run even if DOMContentLoaded already fired
 if (document.readyState === 'interactive' || document.readyState === 'complete') {
   bootstrap();
 }
+
+chrome.runtime.onMessage.addListener(async (message) => {
+  if (message.type === 'DEBUG_RECIPIENT_EXTRACTION') {
+    const composeRoots = document.querySelectorAll('div[role="dialog"], div[aria-label*="Compose" i]');
+    composeRoots.forEach((root, idx) => {
+      const emails = recipientExtractor.extractAll(root);
+      const sender = recipientExtractor.extractSender(root);
+      console.log(`[MailTracker AI Debug] Window ${idx + 1}:`, { to: emails.to, cc: emails.cc, bcc: emails.bcc, sender });
+    });
+  }
+});
